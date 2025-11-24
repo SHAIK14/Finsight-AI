@@ -1,5 +1,6 @@
 # AI Documentation (Claude context files)
 .claude/
+CLAUDE.md
 
 # Environment variables
 .env

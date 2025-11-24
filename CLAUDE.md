@@ -45,11 +45,25 @@ cd server && celery -A app.worker worker --loglevel=info
 
 ## Architecture Docs
 
-For detailed specs, read from `/.claude/docs/`:
+For detailed specs, read from `/.claude/docs/architecture/`:
 - `system-overview.md` - Full system design
 - `api-endpoints.md` - API routes and schemas
 - `database-schema.md` - Tables and relationships
 - `frontend-components.md` - UI component structure
+
+## IMPORTANT: Documentation Rules
+
+**All markdown files for Claude context MUST go in `/.claude/docs/`**
+
+```
+/.claude/docs/
+  /architecture/     # System design, schemas, component specs
+  /guides/           # Implementation guides, how-tos
+  /decisions/        # Architecture decision records (ADRs)
+```
+
+**Never create .md files outside this folder for AI context.**
+This folder is gitignored - kept local only.
 
 ## User Tiers
 
