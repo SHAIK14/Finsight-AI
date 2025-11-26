@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.api.users import router as users_router
+from app.api.webhooks import router as webhook_router
 
 settings = get_settings()
 
@@ -22,6 +23,7 @@ app.add_middleware(
 )
 
 app.include_router(users_router)
+app.include_router(webhook_router)
 
 @app.get("/health")
 async def health_check():
