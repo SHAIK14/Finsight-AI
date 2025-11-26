@@ -1,0 +1,73 @@
+from fastapi import HTTPException,Security
+from fastapi import HTTPException, Security
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import jwt, JWTError
+import httpx
+from functools import lru_cache
+
+from app.core.config import get_settings
+from app.models.user import User
+
+settings = get_settings()
+security = HTTPBearer()
+
+def get_clerk_jwks():
+    """Fetch Clerk's public keys for JWT verification (cached)"""
+    response = httpx.get(f"https://api.clerk.com/v1/jwks")
+    return response.json()
+    
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Security(security)
+) -> dict:
+    """
+    Verify Clerk JWT token and return user info
+    
+    Flow:
+    1. Extract token from Authorization header
+    2. Verify token signature with Clerk's public keys
+    3. Extract user data from token payload
+    4. Return user info (clerk_id, email)
+    """
+    token = credentials.credentials
+    
+    try:
+        # Decode JWT without verification first to get header
+        unverified_header = jwt.get_unverified_header(token)
+        
+        # Get Clerk's public keys
+        jwks = get_clerk_jwks()
+        
+        # Find the key that matches the token
+        rsa_key = {}
+        for key in jwks["keys"]:
+            if key["kid"] == unverified_header["kid"]:
+                rsa_key = {
+                    "kty": key["kty"],
+                    "kid": key["kid"],
+                    "use": key["use"],
+                    "n": key["n"],
+                    "e": key["e"]
+                }
+        
+        if not rsa_key:
+            raise HTTPException(status_code=401, detail="Unable to find appropriate key")
+        
+        # Verify and decode the token
+        payload = jwt.decode(
+            token,
+            rsa_key,
+            algorithms=["RS256"],
+            options={"verify_aud": False}  # Clerk doesn't use audience claim
+        )
+        
+        # Extract user info from payload
+        clerk_id = payload.get("sub")
+        email = payload.get("email")
+        
+        if not clerk_id:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+        
+        return {"clerk_id": clerk_id, "email": email}
+        
+    except JWTError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
