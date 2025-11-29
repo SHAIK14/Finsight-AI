@@ -15,12 +15,15 @@ settings = get_settings()
 async def clerk_webhook(request: Request):
     """
     Clerk webhook handler
-    
+
     Triggered when:
     - user.created: New user signs up → Create in our DB
     - user.deleted: User deletes account → Delete from our DB
+
+    Note: For production, add Svix signature verification
+    For now, we trust ngrok tunnel security
     """
-    
+
     # Parse JSON
     data = await request.json()
     event_type = data.get("type")

@@ -1,21 +1,20 @@
-from supabase import Client, create_client
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 
 from app.core.config import get_settings
 from app.models.user import User, UserCreate
+from app.services.supabase_client import supabase
 
 settings = get_settings()
 
-# Create Supabase client
-supabase: Client = create_client(
-    settings.supabase_url,
-    settings.supabase_service_role_key
-)
+
+
+
+
 
 async def get_user_by_clerk_id(clerk_id: str) -> Optional[User]:
     """Get user by Clerk ID"""
-    response = supabase.table("users").select("*").eq("clerk_id", clerk_id).excute()
+    response = supabase.table("users").select("*").eq("clerk_id", clerk_id).execute()
     if response.data and len(response.data) > 0:
         return User(**response.data[0])
     return None
@@ -23,15 +22,15 @@ async def get_user_by_clerk_id(clerk_id: str) -> Optional[User]:
 async def create_user(user: UserCreate) -> User:
     """Create new user in database"""
     response = supabase.table("users").insert({
-        "clerk_id": user_data.clerk_id,
-        "email": user_data.email,
+        "clerk_id": user.clerk_id,
+        "email": user.email,
         "role": "free",
         "uploads_this_month": 0,
         "queries_this_month": 0,
         "tavily_searches_this_month": 0,
         "usage_reset_date": date.today().isoformat(),
     }).execute()
-    
+
     return User(**response.data[0])
 
 

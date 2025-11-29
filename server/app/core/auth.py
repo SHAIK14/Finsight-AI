@@ -7,13 +7,18 @@ from functools import lru_cache
 
 from app.core.config import get_settings
 from app.models.user import User
+from app.services.supabase_client import supabase
 
 settings = get_settings()
 security = HTTPBearer()
 
 def get_clerk_jwks():
     """Fetch Clerk's public keys for JWT verification (cached)"""
-    response = httpx.get(f"https://api.clerk.com/v1/jwks")
+    # Extract Clerk frontend API from publishable key or use direct domain
+    # For development, use your Clerk instance domain
+    clerk_domain = "sacred-muskox-58.clerk.accounts.dev"
+    response = httpx.get(f"https://{clerk_domain}/.well-known/jwks.json")
+    response.raise_for_status()
     return response.json()
     
 async def get_current_user(
@@ -63,11 +68,25 @@ async def get_current_user(
         # Extract user info from payload
         clerk_id = payload.get("sub")
         email = payload.get("email")
-        
+
         if not clerk_id:
             raise HTTPException(status_code=401, detail="Invalid token payload")
-        
-        return {"clerk_id": clerk_id, "email": email}
+
+        # Use user_service to get or create user (auto-creates on first login)
+        from app.services.user_service import get_or_create_user
+
+        user = await get_or_create_user(clerk_id=clerk_id, email=email)
+
+        # Return dict with user data (not User object, for compatibility)
+        return {
+            "id": str(user.id),
+            "clerk_id": user.clerk_id,
+            "email": user.email,
+            "role": user.role,
+            "uploads_this_month": user.uploads_this_month,
+            "queries_this_month": user.queries_this_month,
+        }
+
         
     except JWTError as e:
         raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")

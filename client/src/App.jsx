@@ -1,12 +1,14 @@
 import { SignInButton, SignUpButton, SignedIn, SignedOut, UserButton, useUser } from '@clerk/clerk-react'
 import { ThemeToggle } from './components/ThemeToggle'
 import { Dashboard } from './components/Dashboard'
+import { ToastContainer } from './components/Toast'
 
 function App() {
   const { user, isLoaded } = useUser()
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
+      <ToastContainer />
       <SignedOut>
         {/* Header - Landing Page */}
         <header className="border-b border-[var(--color-border)] bg-[var(--color-bg-primary)]/80 backdrop-blur-md sticky top-0 z-50">

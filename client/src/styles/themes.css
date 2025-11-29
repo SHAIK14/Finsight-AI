@@ -73,8 +73,8 @@
   --color-border: #2a2a2a;
   --color-border-hover: #3a3a3a;
 
-  --color-accent: #fbbf24;  /* Amber/gold like terminal */
-  --color-accent-hover: #f59e0b;
+  --color-accent: #f59e0b;  /* Darker amber for better contrast with white text */
+  --color-accent-hover: #d97706;
 
   --color-highlight: #fbbf24;
   --color-highlight-hover: #f59e0b;

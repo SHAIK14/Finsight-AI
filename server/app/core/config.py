@@ -10,6 +10,7 @@ class Settings(BaseSettings):
 
     # Clerk Auth
     clerk_secret_key: str
+    clerk_webhook_secret: str = ""  # Optional - for webhook signature verification
 
     # Supabase
     supabase_url: str
@@ -32,6 +33,14 @@ class Settings(BaseSettings):
     # Rate limits
     free_upload_limit: int = 1
     free_query_limit: int = 5
+
+    # File size limits (in bytes)
+    max_file_size_free: int = 10 * 1024 * 1024       # 10 MB for free users
+    max_file_size_premium: int = 50 * 1024 * 1024    # 50 MB for premium/admin
+
+    # Storage quota limits (in bytes)
+    max_storage_free: int = 50 * 1024 * 1024         # 50 MB total for free users
+    max_storage_premium: int = 500 * 1024 * 1024     # 500 MB total for premium
 
     class Config:
         env_file = ".env"
