@@ -17,12 +17,15 @@ export function Dashboard({ user, isLoaded }) {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [showUsageTooltip, setShowUsageTooltip] = useState(false)
   const [isQuerying, setIsQuerying] = useState(false)
+  const [chatHistory, setChatHistory] = useState([]) // Store past chat sessions
+  const [currentChatId, setCurrentChatId] = useState(null) // Current active chat
 
   // Fetch user profile on mount
   useEffect(() => {
     if (isLoaded && user) {
       fetchUserProfile()
       fetchDocuments()
+      fetchChatHistory()  // Load chat history from database
     }
   }, [isLoaded, user])
 
@@ -49,6 +52,80 @@ export function Dashboard({ user, isLoaded }) {
       setUploadedDocs(data.documents || [])
     } catch (error) {
       console.error('Failed to fetch documents:', error)
+    }
+  }
+
+  const fetchChatHistory = async () => {
+    /**
+     * Load all chat sessions from database
+     *
+     * How it works:
+     * 1. Call backend API to get user's chats
+     * 2. Populate chatHistory state
+     * 3. Chats are sorted by updated_at (most recent first)
+     *
+     * Why on mount?
+     * - User sees their previous conversations immediately
+     * - Survives page refresh
+     */
+    try {
+      const token = await getToken()
+      const response = await fetch(`${API_URL}/api/chat/list`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      const data = await response.json()
+      setChatHistory(data.chats || [])
+    } catch (error) {
+      console.error('Failed to fetch chat history:', error)
+    }
+  }
+
+  const saveChat = async () => {
+    /**
+     * Save current chat session to database
+     *
+     * How it works:
+     * 1. Check if there are messages to save
+     * 2. Send to backend (upsert - insert or update)
+     * 3. Backend handles duplicate prevention
+     *
+     * When called?
+     * - After streaming completes (in handleQuery)
+     * - When user clicks "New Chat" (to save before clearing)
+     *
+     * Why auto-save?
+     * - User never loses their conversation
+     * - No manual "Save" button needed
+     * - ChatGPT-style seamless experience
+     */
+    if (messages.length === 0) return
+
+    try {
+      const token = await getToken()
+      const chatId = currentChatId || Date.now().toString()
+
+      await fetch(`${API_URL}/api/chat/save`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          id: chatId,
+          title: messages[0]?.content.substring(0, 50) || 'New Chat',  // First 50 chars
+          messages: messages
+        })
+      })
+
+      // Update currentChatId if it was null
+      if (!currentChatId) {
+        setCurrentChatId(chatId)
+      }
+
+      // Refresh chat history to show in sidebar
+      await fetchChatHistory()
+    } catch (error) {
+      console.error('Failed to save chat:', error)
     }
   }
 
@@ -137,7 +214,25 @@ export function Dashboard({ user, isLoaded }) {
   }
 
   const handleQuery = async (question) => {
-    // Check query limit
+    /**
+     * Handle user query with streaming SSE response.
+     *
+     * How it works:
+     * 1. Rate limit check
+     * 2. Add user message to chat
+     * 3. Create empty assistant message (will fill token-by-token)
+     * 4. Make fetch request to backend
+     * 5. Read response stream chunk by chunk
+     * 6. Parse SSE events and update assistant message
+     * 7. Handle completion and errors
+     *
+     * Why streaming?
+     * - User sees response immediately (like ChatGPT)
+     * - Better UX - text appears word-by-word
+     * - Same cost, just different delivery
+     */
+
+    // Step 1: Rate limit check
     if (userProfile?.role === 'free' && userProfile?.queries_limit) {
       if (userProfile.queries_this_month >= userProfile.queries_limit) {
         toast.error('Query limit reached', `Free tier allows ${userProfile.queries_limit} queries per month`)
@@ -147,7 +242,7 @@ export function Dashboard({ user, isLoaded }) {
 
     setIsQuerying(true)
 
-    // Add user message to chat
+    // Step 2: Add user message to chat
     const userMessage = {
       id: Date.now(),
       role: 'user',
@@ -156,8 +251,22 @@ export function Dashboard({ user, isLoaded }) {
     }
     setMessages(prev => [...prev, userMessage])
 
+    // Step 3: Create empty assistant message that we'll fill token-by-token
+    const assistantMessageId = Date.now() + 1
+    const assistantMessage = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',  // Start empty, we'll append tokens
+      sources: [],
+      streaming: true,  // Flag to show typing indicator
+      timestamp: new Date()
+    }
+    setMessages(prev => [...prev, assistantMessage])
+
     try {
       const token = await getToken()
+
+      // Step 4: Make fetch request with streaming
       const response = await fetch(`${API_URL}/api/queries/ask`, {
         method: 'POST',
         headers: {
@@ -171,39 +280,98 @@ export function Dashboard({ user, isLoaded }) {
       })
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || 'Query failed')
+        throw new Error('Query failed')
       }
 
-      const data = await response.json()
+      // Step 5: Read the stream using response.body
+      // response.body is a ReadableStream - we read it chunk by chunk
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()  // Converts bytes to text
 
-      // Add assistant message to chat
-      const assistantMessage = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: data.answer,
-        sources: data.sources,
-        cached: data.cached,
-        timestamp: new Date()
+      let buffer = ''  // Store incomplete SSE messages
+
+      // Step 6: Read stream in a loop
+      while (true) {
+        // Read one chunk from the stream
+        const { done, value } = await reader.read()
+
+        if (done) {
+          // Stream finished
+          break
+        }
+
+        // Step 7: Decode chunk from bytes to text
+        // value is Uint8Array like: [100, 97, 116, 97, 58, ...]
+        // decoder turns it into string: "data: {...}\n\n"
+        const chunk = decoder.decode(value, { stream: true })
+        buffer += chunk
+
+        // Step 8: Process complete SSE messages
+        // SSE messages end with \n\n, so we split by that
+        const lines = buffer.split('\n\n')
+
+        // Last element might be incomplete, keep it in buffer
+        buffer = lines.pop() || ''
+
+        // Step 9: Process each complete message
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            // Remove "data: " prefix and parse JSON
+            const jsonStr = line.slice(6)  // Skip "data: "
+
+            try {
+              const event = JSON.parse(jsonStr)
+
+              if (event.type === 'token') {
+                // Step 10: Append token to assistant message
+                setMessages(prev => prev.map(msg =>
+                  msg.id === assistantMessageId
+                    ? { ...msg, content: msg.content + event.content }
+                    : msg
+                ))
+              } else if (event.type === 'done') {
+                // Step 11: Streaming complete, add sources
+                setMessages(prev => prev.map(msg =>
+                  msg.id === assistantMessageId
+                    ? {
+                        ...msg,
+                        sources: event.sources,
+                        streaming: false  // Remove typing indicator
+                      }
+                    : msg
+                ))
+
+                // Refresh user profile to update query count
+                await fetchUserProfile()
+
+                // Auto-save chat to database after streaming completes
+                await saveChat()
+              } else if (event.type === 'error') {
+                // Step 12: Handle errors
+                throw new Error(event.content)
+              }
+            } catch (parseError) {
+              console.error('Failed to parse SSE event:', parseError)
+            }
+          }
+        }
       }
-      setMessages(prev => [...prev, assistantMessage])
-
-      // Refresh user profile to update query count
-      await fetchUserProfile()
 
     } catch (error) {
       console.error('Query error:', error)
       toast.error('Query failed', error.message)
 
-      // Add error message to chat
-      const errorMessage = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: `Sorry, I encountered an error: ${error.message}`,
-        error: true,
-        timestamp: new Date()
-      }
-      setMessages(prev => [...prev, errorMessage])
+      // Update assistant message with error
+      setMessages(prev => prev.map(msg =>
+        msg.id === assistantMessageId
+          ? {
+              ...msg,
+              content: `Sorry, I encountered an error: ${error.message}`,
+              error: true,
+              streaming: false
+            }
+          : msg
+      ))
     } finally {
       setIsQuerying(false)
     }
@@ -213,6 +381,45 @@ export function Dashboard({ user, isLoaded }) {
     signOut()
   }
 
+  const handleNewChat = async () => {
+    /**
+     * Start a new chat session
+     *
+     * How it works:
+     * 1. Save current chat to database (if exists)
+     * 2. Clear current messages
+     * 3. Generate new chat ID
+     *
+     * Why async?
+     * - Now saves to database instead of just state
+     * - Ensures chat is persisted before clearing
+     */
+    if (messages.length > 0) {
+      // Save current chat to database
+      await saveChat()
+    }
+
+    // Clear current chat
+    setMessages([])
+    setCurrentChatId(Date.now().toString())
+  }
+
+  const handleLoadChat = (chatId) => {
+    /**
+     * Load a previous chat session
+     *
+     * How it works:
+     * 1. Find chat in history
+     * 2. Load its messages
+     * 3. Set as current chat
+     */
+    const chat = chatHistory.find(c => c.id === chatId)
+    if (chat) {
+      setMessages(chat.messages)
+      setCurrentChatId(chatId)
+    }
+  }
+
   return (
     <div className="h-[calc(100vh-57px)] flex">
       {/* Left Sidebar - ChatGPT Style */}
@@ -220,8 +427,12 @@ export function Dashboard({ user, isLoaded }) {
         user={user}
         userProfile={userProfile}
         uploadedDocs={uploadedDocs}
+        chatHistory={chatHistory}
+        currentChatId={currentChatId}
         onLogout={handleLogout}
         onDeleteDoc={handleDeleteDoc}
+        onNewChat={handleNewChat}
+        onLoadChat={handleLoadChat}
         showUsageTooltip={showUsageTooltip}
         setShowUsageTooltip={setShowUsageTooltip}
       />
@@ -242,12 +453,17 @@ export function Dashboard({ user, isLoaded }) {
 }
 
 // Sidebar Component - ChatGPT Style
-function Sidebar({ user, userProfile, uploadedDocs, onLogout, onDeleteDoc, showUsageTooltip, setShowUsageTooltip }) {
+function Sidebar({ user, userProfile, uploadedDocs, chatHistory, currentChatId, onLogout, onDeleteDoc, onNewChat, onLoadChat, showUsageTooltip, setShowUsageTooltip }) {
+  const [docsExpanded, setDocsExpanded] = useState(true)
+
   return (
     <div className="w-64 border-r border-[var(--color-border)] bg-[var(--color-bg-secondary)] flex flex-col">
       {/* New Chat Button */}
       <div className="p-4">
-        <button className="w-full flex items-center gap-3 px-4 py-3 bg-[var(--color-bg-primary)] hover:bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-lg transition-colors text-sm font-medium">
+        <button
+          onClick={onNewChat}
+          className="w-full flex items-center gap-3 px-4 py-3 bg-[var(--color-bg-primary)] hover:bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-lg transition-colors text-sm font-medium"
+        >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
@@ -255,30 +471,67 @@ function Sidebar({ user, userProfile, uploadedDocs, onLogout, onDeleteDoc, showU
         </button>
       </div>
 
-      {/* Documents Section */}
+      {/* Scrollable Content Area */}
       <div className="flex-1 overflow-y-auto px-4 pb-4">
-        <div className="mb-3">
-          <h3 className="text-xs font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider px-2 mb-2">
-            Documents
-          </h3>
+        {/* Documents Section - Collapsible */}
+        <div className="mb-6">
+          <button
+            onClick={() => setDocsExpanded(!docsExpanded)}
+            className="w-full flex items-center justify-between px-2 py-2 hover:bg-[var(--color-bg-tertiary)] rounded-lg transition-colors group"
+          >
+            <h3 className="text-xs font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">
+              Documents ({uploadedDocs.length})
+            </h3>
+            <svg
+              className={`w-4 h-4 text-[var(--color-text-tertiary)] transition-transform ${docsExpanded ? 'rotate-180' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
 
-          {uploadedDocs.length === 0 ? (
-            <p className="text-xs text-[var(--color-text-tertiary)] px-2 py-4 text-center">
-              No documents uploaded yet
-            </p>
-          ) : (
-            <div className="space-y-1">
-              {uploadedDocs.map((doc) => (
-                <DocumentItem
-                  key={doc.id}
-                  document={doc}
-                  canDelete={userProfile?.role === 'premium' || userProfile?.role === 'admin'}
-                  onDelete={onDeleteDoc}
-                />
-              ))}
+          {docsExpanded && (
+            <div className="mt-2">
+              {uploadedDocs.length === 0 ? (
+                <p className="text-xs text-[var(--color-text-tertiary)] px-2 py-4 text-center">
+                  No documents yet
+                </p>
+              ) : (
+                <div className="space-y-0.5">
+                  {uploadedDocs.map((doc) => (
+                    <DocumentItem
+                      key={doc.id}
+                      document={doc}
+                      canDelete={userProfile?.role === 'premium' || userProfile?.role === 'admin'}
+                      onDelete={onDeleteDoc}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
+
+        {/* Chat History Section - Scrollable */}
+        {chatHistory.length > 0 && (
+          <div>
+            <h3 className="text-xs font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider px-2 mb-2">
+              Recent Chats
+            </h3>
+            <div className="space-y-0.5">
+              {chatHistory.map((chat) => (
+                <ChatHistoryItem
+                  key={chat.id}
+                  chat={chat}
+                  isActive={chat.id === currentChatId}
+                  onClick={() => onLoadChat(chat.id)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
 
@@ -583,7 +836,7 @@ function ChatArea({ uploadedDocs, messages, uploading, uploadProgress, userProfi
   )
 }
 
-// Document Item Component
+// Document Item Component - ChatGPT Style (no borders, clean hover)
 function DocumentItem({ document, canDelete, onDelete }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
@@ -593,16 +846,16 @@ function DocumentItem({ document, canDelete, onDelete }) {
   }
 
   return (
-    <div className="group relative px-2 py-2 hover:bg-[var(--color-bg-tertiary)] rounded-lg transition-colors">
+    <div className="group relative px-2 py-2.5 hover:bg-[var(--color-bg-tertiary)] rounded-md transition-colors cursor-default">
       <div className="flex items-start gap-2">
         {/* PDF Icon */}
-        <svg className="w-4 h-4 text-[var(--color-error)] flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+        <svg className="w-3.5 h-3.5 text-[var(--color-error)] flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
           <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
         </svg>
 
         {/* Document Info */}
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-medium text-[var(--color-text-primary)] truncate">
+          <div className="text-xs text-[var(--color-text-primary)] truncate">
             {document.fileName}
           </div>
           <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">
@@ -645,6 +898,58 @@ function DocumentItem({ document, canDelete, onDelete }) {
         </div>
       )}
     </div>
+  )
+}
+
+// Chat History Item Component - ChatGPT Style
+function ChatHistoryItem({ chat, isActive, onClick }) {
+  /**
+   * Display a past chat session in the sidebar
+   *
+   * Shows:
+   * - First question as title (truncated)
+   * - Relative timestamp
+   * - Active state highlight
+   */
+  const getRelativeTime = (timestamp) => {
+    const now = new Date()
+    const diff = now - new Date(timestamp)
+    const minutes = Math.floor(diff / 60000)
+    const hours = Math.floor(diff / 3600000)
+    const days = Math.floor(diff / 86400000)
+
+    if (minutes < 60) return `${minutes}m ago`
+    if (hours < 24) return `${hours}h ago`
+    if (days < 7) return `${days}d ago`
+    return new Date(timestamp).toLocaleDateString()
+  }
+
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full text-left px-2 py-2.5 rounded-md transition-colors ${
+        isActive
+          ? 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]'
+          : 'hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]'
+      }`}
+    >
+      <div className="flex items-start gap-2">
+        {/* Chat Icon */}
+        <svg className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+        </svg>
+
+        {/* Chat Info */}
+        <div className="flex-1 min-w-0">
+          <div className="text-xs truncate">
+            {chat.title}
+          </div>
+          <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">
+            {getRelativeTime(chat.timestamp)}
+          </div>
+        </div>
+      </div>
+    </button>
   )
 }
 

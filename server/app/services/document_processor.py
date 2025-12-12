@@ -3,7 +3,7 @@ from typing import List, Dict
 from pypdf import PdfReader
 from fastapi import HTTPException, status
 from supabase import Client
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 
 from app.core.config import get_settings

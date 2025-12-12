@@ -30,7 +30,7 @@ def search_similar_chunks(supabase:Client,question_embedding: List[float],
     if document_id:
         params["filter_document_ids"] = document_id
     
-    response = supabase.rpc("search_similar_chunks", params).execute()
+    response = supabase.rpc("match_chunks", params).execute()
     return response.data
  except Exception as e:
     raise Exception(f"Failed to search similar chunks: {str(e)}")

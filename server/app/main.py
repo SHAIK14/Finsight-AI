@@ -6,6 +6,7 @@ from app.api.users import router as users_router
 from app.api.webhooks import router as webhook_router
 from app.api.documents import router as documents_router
 from app.api.queries import router as queries_router
+from app.api.chat_history import router as chat_history_router
 
 settings = get_settings()
 
@@ -28,6 +29,7 @@ app.include_router(users_router)
 app.include_router(webhook_router)
 app.include_router(documents_router)
 app.include_router(queries_router)
+app.include_router(chat_history_router)
 
 @app.get("/health")
 async def health_check():

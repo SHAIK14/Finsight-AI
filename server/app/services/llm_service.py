@@ -1,6 +1,6 @@
 from typing import List, Dict
 from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 
 from app.core.config import get_settings
 
@@ -14,7 +14,7 @@ llm = ChatOpenAI(
 )
 
 
-def generate_answer(question: str, chunks: List[Dict]) -> Dict:
+def generate_answer(question: str, chunks: List[Dict],stream:bool = False) -> Dict:
     
     try:
         # Step 1: Build context from chunks
@@ -54,7 +54,7 @@ Answer:""")
         # Step 3: Create chain (prompt → LLM) and invoke
         # LangChain's | operator chains them together
         chain = prompt_template | llm
-        response = chain.invoke({"context": context, "question": question})
+        # response = chain.invoke({"context": context, "question": question})
 
         # Step 4: Format sources for frontend
         # Frontend will show these as citations
@@ -67,10 +67,38 @@ Answer:""")
                 "similarity": chunk["similarity"]  # How relevant this chunk is
             })
 
-        return {
-            "answer": response.content,  # GPT's generated answer
-            "sources": sources  # Where the info came from
-        }
+        if stream:
+            for chunk in chain.stream({"context": context, "question": question}):
+                if chunk.content:
+                    yield {
+                        "type":"token",
+                        "content":chunk.content
+                    }
+            yield{
+                "type":"done",
+                "sources":sources
+                
+            }
+        else:
+            response = chain.invoke({"context": context, "question": question})
+            return {
+
+                "answer": response.content,  # GPT's generated answer
+                "sources": sources  # Where the info came from
+            }
+        
+
+
+
+
     except Exception as e:
-        raise Exception(f"Failed to generate answer: {str(e)}")
+        if stream:
+            yield{
+                "type":"error",
+                "content": f"Failed to generate answer: {str(e)}"
+            }
+        else:
+            raise Exception(f"Failed to generate answer: {str(e)}")
+      
+
 
