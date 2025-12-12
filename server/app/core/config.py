@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str
 
+    # Cohere (for reranking)
+    cohere_api_key: str
+
     # Redis (Upstash)
     upstash_redis_url: str
     upstash_redis_token: str

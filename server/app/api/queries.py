@@ -10,6 +10,8 @@ from app.services.supabase_client import supabase
 from app.services.document_processor import process_document
 from app.services.vector_search import embed_question,search_similar_chunks
 from app.services.llm_service import generate_answer
+from app.services.reranker import rerank_chunks
+from app.services.query_preprocessor import preprocess_query
 
 router = APIRouter(
     prefix = "/api/queries",
@@ -55,20 +57,29 @@ async def ask_question(
                 if doc["status"] == "pending":
                     await process_document(doc["id"], supabase)
             
+            # Query preprocessing
+            normalized_query = preprocess_query(request.question)
+
             # Vector search
-            question_embedding = embed_question(request.question)
+            question_embedding = embed_question(normalized_query)
             doc_ids = [doc["id"] for doc in docs_response.data]
             chunks = search_similar_chunks(
                 supabase=supabase,
                 question_embedding=question_embedding,
                 document_id=doc_ids,
-                top_k=5
+                top_k=20
+            )
+
+            reranked_chunks = rerank_chunks(
+                query=request.question,
+                chunks=chunks,
+                top_n=5
             )
             
             # Stream answer tokens
             for event in generate_answer(
                 question=request.question,
-                chunks=chunks,
+                chunks=reranked_chunks,
                 stream=True
             ):
                 yield f"data: {json.dumps(event)}\n\n"
