@@ -12,6 +12,7 @@ from app.services.vector_search import embed_question,search_similar_chunks
 from app.services.llm_service import generate_answer
 from app.services.reranker import rerank_chunks
 from app.services.query_preprocessor import preprocess_query
+from app.services.redis_cache import cache_service
 
 router = APIRouter(
     prefix = "/api/queries",
@@ -29,60 +30,96 @@ async def ask_question(
     request: QueryRequest,
     current_user: dict = Depends(get_current_user)
 ):
+    user_id = current_user["clerk_id"]
+    question = request.question
+    doc_ids = request.document_ids or []
 
-    
-    # All the streaming logic goes INSIDE this nested function
     async def event_generator():
         try:
-            # Rate limiting check
             if current_user["role"] == "free":
                 if current_user["queries_this_month"] >= settings.free_query_limit:
                     yield f"data: {json.dumps({'type': 'error', 'content': 'Query limit reached'})}\n\n"
                     return
-            
-            # Fetch documents
+
             doc_query = supabase.table("documents").select("*").eq("clerk_id", current_user["clerk_id"])
             
             if request.document_ids:
                 doc_query = doc_query.in_("id", request.document_ids)
-            
+
             docs_response = doc_query.execute()
-            
+
             if not docs_response.data:
                 yield f"data: {json.dumps({'type': 'error', 'content': 'No documents found'})}\n\n"
                 return
-            
-            # Lazy process pending documents
+
+            actual_doc_ids = [doc["id"] for doc in docs_response.data]
+
+            print(f"🔍 Checking cache for question: {question}")
+            cached_response = cache_service.get_query_response(user_id, question, actual_doc_ids)
+            if cached_response:
+                print(f"✅ CACHE HIT - Returning cached response")
+                answer_text = cached_response.get('answer', '')
+                print(f"📝 Answer length: {len(answer_text)} characters")
+                print(f"📝 First 100 chars: {answer_text[:100]}")
+
+                # Stream in chunks of 5 characters for smooth appearance
+                chunk_size = 5
+                chunk_count = 0
+                for i in range(0, len(answer_text), chunk_size):
+                    chunk = answer_text[i:i+chunk_size]
+                    chunk_count += 1
+                    yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
+
+                print(f"📤 Sent {chunk_count} chunks")
+                yield f"data: {json.dumps({'type': 'done', 'sources': cached_response.get('sources', [])})}\n\n"
+                print(f"✅ Done event sent")
+                return
+
+            print(f"❌ CACHE MISS - Running full pipeline")
+
             for doc in docs_response.data:
                 if doc["status"] == "pending":
                     await process_document(doc["id"], supabase)
-            
-            # Query preprocessing
+
             normalized_query = preprocess_query(request.question)
 
-            # Vector search
-            question_embedding = embed_question(normalized_query)
-            doc_ids = [doc["id"] for doc in docs_response.data]
-            chunks = search_similar_chunks(
-                supabase=supabase,
-                question_embedding=question_embedding,
-                document_id=doc_ids,
-                top_k=20
-            )
+            cached_chunks = cache_service.get_search_chunks(normalized_query, actual_doc_ids)
 
-            reranked_chunks = rerank_chunks(
-                query=request.question,
-                chunks=chunks,
-                top_n=5
-            )
-            
-            # Stream answer tokens
+            if cached_chunks:
+                reranked_chunks = cached_chunks
+            else:
+                question_embedding = embed_question(normalized_query)
+                chunks = search_similar_chunks(
+                    supabase=supabase,
+                    question_embedding=question_embedding,
+                    document_id=actual_doc_ids,
+                    top_k=20
+                )
+                reranked_chunks = rerank_chunks(
+                    query=request.question,
+                    chunks=chunks,
+                    top_n=5
+                )
+                cache_service.set_search_chunks(normalized_query, actual_doc_ids, reranked_chunks)
+
+            full_answer = ""
             for event in generate_answer(
                 question=request.question,
                 chunks=reranked_chunks,
                 stream=True
             ):
+                if event.get('type') == 'token':
+                    full_answer += event.get('content', '')
                 yield f"data: {json.dumps(event)}\n\n"
+
+            print(f"💾 Storing in cache: {full_answer[:50]}...")
+            cache_service.set_query_response(
+                user_id=user_id,
+                question=question,
+                document_ids=actual_doc_ids,
+                response={"answer": full_answer, "sources": reranked_chunks}
+            )
+            print(f"✅ Cached successfully")
             
             # Update query count after streaming completes
             try:
@@ -108,6 +145,15 @@ async def ask_question(
             "Connection": "keep-alive",
         }
     )
+@router.delete("/cache/flush")
+async def flush_cache(current_user: dict = Depends(get_current_user)):
+    """Flush all cached queries for current user"""
+    deleted_count = cache_service.invalidate_query_cache(current_user["clerk_id"])
+    return {
+        "success": True,
+        "message": f"Flushed {deleted_count} cached queries"
+    }
+
 @router.get("/history")
 async def get_history(
     limit: int = 50,

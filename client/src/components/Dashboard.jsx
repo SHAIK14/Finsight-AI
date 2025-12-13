@@ -213,6 +213,35 @@ export function Dashboard({ user, isLoaded }) {
     }
   }
 
+  const handleDeleteChat = async (chatId) => {
+    try {
+      const token = await getToken()
+      const response = await fetch(`${API_URL}/api/chat/${chatId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.detail || 'Delete failed')
+      }
+
+      // If deleted chat was active, clear current chat
+      if (chatId === currentChatId) {
+        setMessages([])
+        setCurrentChatId(null)
+      }
+
+      // Refresh chat history
+      await fetchChatHistory()
+
+      toast.success('Chat deleted', 'Chat removed successfully')
+    } catch (error) {
+      console.error('Delete chat error:', error)
+      toast.error('Delete failed', error.message)
+    }
+  }
+
   const handleQuery = async (question) => {
     /**
      * Handle user query with streaming SSE response.
@@ -431,6 +460,7 @@ export function Dashboard({ user, isLoaded }) {
         currentChatId={currentChatId}
         onLogout={handleLogout}
         onDeleteDoc={handleDeleteDoc}
+        onDeleteChat={handleDeleteChat}
         onNewChat={handleNewChat}
         onLoadChat={handleLoadChat}
         showUsageTooltip={showUsageTooltip}
@@ -453,7 +483,7 @@ export function Dashboard({ user, isLoaded }) {
 }
 
 // Sidebar Component - ChatGPT Style
-function Sidebar({ user, userProfile, uploadedDocs, chatHistory, currentChatId, onLogout, onDeleteDoc, onNewChat, onLoadChat, showUsageTooltip, setShowUsageTooltip }) {
+function Sidebar({ user, userProfile, uploadedDocs, chatHistory, currentChatId, onLogout, onDeleteDoc, onDeleteChat, onNewChat, onLoadChat, showUsageTooltip, setShowUsageTooltip }) {
   const [docsExpanded, setDocsExpanded] = useState(true)
 
   return (
@@ -527,6 +557,7 @@ function Sidebar({ user, userProfile, uploadedDocs, chatHistory, currentChatId, 
                   chat={chat}
                   isActive={chat.id === currentChatId}
                   onClick={() => onLoadChat(chat.id)}
+                  onDelete={onDeleteChat}
                 />
               ))}
             </div>
@@ -902,7 +933,7 @@ function DocumentItem({ document, canDelete, onDelete }) {
 }
 
 // Chat History Item Component - ChatGPT Style
-function ChatHistoryItem({ chat, isActive, onClick }) {
+function ChatHistoryItem({ chat, isActive, onClick, onDelete }) {
   /**
    * Display a past chat session in the sidebar
    *
@@ -910,7 +941,10 @@ function ChatHistoryItem({ chat, isActive, onClick }) {
    * - First question as title (truncated)
    * - Relative timestamp
    * - Active state highlight
+   * - Delete button with confirmation modal on hover
    */
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
   const getRelativeTime = (timestamp) => {
     const now = new Date()
     const diff = now - new Date(timestamp)
@@ -920,36 +954,82 @@ function ChatHistoryItem({ chat, isActive, onClick }) {
 
     if (minutes < 60) return `${minutes}m ago`
     if (hours < 24) return `${hours}h ago`
-    if (days < 7) return `${days}d ago`
+    if (days < 30) return `${days}d ago`
     return new Date(timestamp).toLocaleDateString()
   }
 
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full text-left px-2 py-2.5 rounded-md transition-colors ${
-        isActive
-          ? 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]'
-          : 'hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]'
-      }`}
-    >
-      <div className="flex items-start gap-2">
-        {/* Chat Icon */}
-        <svg className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-        </svg>
+  const handleDelete = (e) => {
+    e.stopPropagation()
+    onDelete(chat.id)
+    setShowDeleteConfirm(false)
+  }
 
-        {/* Chat Info */}
-        <div className="flex-1 min-w-0">
-          <div className="text-xs truncate">
-            {chat.title}
-          </div>
-          <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">
-            {getRelativeTime(chat.timestamp)}
+  return (
+    <div className="group relative">
+      <button
+        onClick={onClick}
+        className={`w-full text-left px-2 py-2.5 rounded-md transition-colors ${
+          isActive
+            ? 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]'
+            : 'hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]'
+        }`}
+      >
+        <div className="flex items-start gap-2">
+          {/* Chat Icon */}
+          <svg className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+
+          {/* Chat Info */}
+          <div className="flex-1 min-w-0 pr-6">
+            <div className="text-xs truncate">
+              {chat.title}
+            </div>
+            <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">
+              {getRelativeTime(chat.updated_at)}
+            </div>
           </div>
         </div>
-      </div>
-    </button>
+      </button>
+
+      {/* Delete Button - Shows on hover */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation()
+          setShowDeleteConfirm(true)
+        }}
+        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 transition-all"
+        title="Delete chat"
+      >
+        <svg className="w-3.5 h-3.5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        </svg>
+      </button>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="absolute top-full left-0 mt-1 w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg shadow-[var(--shadow-lg)] p-2 z-20">
+          <p className="text-xs text-[var(--color-text-secondary)] mb-2">Delete this chat?</p>
+          <div className="flex gap-1">
+            <button
+              onClick={handleDelete}
+              className="flex-1 px-2 py-1 bg-[var(--color-error)] hover:bg-[var(--color-error)]/90 text-white text-xs rounded transition-colors"
+            >
+              Delete
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setShowDeleteConfirm(false)
+              }}
+              className="flex-1 px-2 py-1 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] text-xs rounded transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 

@@ -4,6 +4,7 @@ from datetime import datetime
 from app.core.config import get_settings
 from app.core.auth import get_current_user
 from app.services.supabase_client import supabase
+from app.services.redis_cache import cache_service
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 settings = get_settings()
@@ -122,19 +123,15 @@ async def upload_document(
             detail=f"Failed to create document record: {str(e)}"
         )
 
-    # Update user upload count
     try:
         supabase.table("users").update({
             "uploads_this_month": current_user["uploads_this_month"] + 1
         }).eq("id", current_user["id"]).execute()
     except Exception:
-        pass  # Don't fail upload if count update fails
+        pass
 
-    # TODO: Trigger Celery task to extract metadata
-    # from app.tasks import process_document
-    # process_document.delay(created_document["id"])
+    cache_service.invalidate_user_documents(current_user["clerk_id"])
 
-    # Return response
     return {
         "success": True,
         "message": "Document uploaded successfully",
@@ -150,16 +147,15 @@ async def upload_document(
 
 @router.get("/")
 async def get_documents(current_user: dict = Depends(get_current_user)):
-    """
-    Get all documents for the current user
+    cached_docs = cache_service.get_user_documents(current_user["clerk_id"])
 
-    Returns documents formatted for frontend compatibility
-    """
+    if cached_docs:
+        return {"documents": cached_docs}
+
     response = supabase.table("documents").select("*").eq(
         "clerk_id", current_user["clerk_id"]
     ).order("created_at", desc=True).execute()
 
-    # Transform database format to frontend format
     documents = []
     for doc in response.data:
         documents.append({
@@ -167,11 +163,13 @@ async def get_documents(current_user: dict = Depends(get_current_user)):
             "company": doc["company_name"] or "Unknown",
             "type": doc["document_type"] or "Unknown",
             "year": str(doc["document_year"]) if doc["document_year"] else "Unknown",
-            "uploadedAt": doc["created_at"],  # Frontend can format this
+            "uploadedAt": doc["created_at"],
             "status": doc["status"],
             "fileName": doc["file_name"],
             "fileSize": f"{doc['file_size'] / (1024 * 1024):.2f} MB"
         })
+
+    cache_service.set_user_documents(current_user["clerk_id"], documents)
 
     return {
         "documents": documents
@@ -246,14 +244,16 @@ async def delete_document(
             detail=f"Failed to delete document: {str(e)}"
         )
 
-    # Update user upload count (decrement)
     try:
         if current_user["uploads_this_month"] > 0:
             supabase.table("users").update({
                 "uploads_this_month": current_user["uploads_this_month"] - 1
             }).eq("id", current_user["id"]).execute()
     except Exception:
-        pass  # Don't fail deletion if count update fails
+        pass
+
+    cache_service.invalidate_user_documents(current_user["clerk_id"])
+    cache_service.invalidate_query_cache(current_user["clerk_id"], document_ids=[document_id])
 
     return {
         "success": True,
