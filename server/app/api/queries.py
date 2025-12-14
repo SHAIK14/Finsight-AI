@@ -13,6 +13,9 @@ from app.services.llm_service import generate_answer
 from app.services.reranker import rerank_chunks
 from app.services.query_preprocessor import preprocess_query
 from app.services.redis_cache import cache_service
+from app.services.query_router import classify_query
+from app.services.tavily_search import search_financial_data, format_for_llm
+from app.agents.supervisor import agent_graph
 
 router = APIRouter(
     prefix = "/api/queries",
@@ -81,6 +84,13 @@ async def ask_question(
                 if doc["status"] == "pending":
                     await process_document(doc["id"], supabase)
 
+            route_info = classify_query(request.question, current_user["role"])
+            print(f"🧭 Query routed: {route_info}")
+
+            if route_info.get("requires_permission"):
+                yield f"data: {json.dumps({'type': 'info', 'content': 'This query requires web search (Pro/Admin feature). Searching documents only...'})}\n\n"
+                route_info["needs_web_search"] = False
+
             normalized_query = preprocess_query(request.question)
 
             cached_chunks = cache_service.get_search_chunks(normalized_query, actual_doc_ids)
@@ -102,15 +112,37 @@ async def ask_question(
                 )
                 cache_service.set_search_chunks(normalized_query, actual_doc_ids, reranked_chunks)
 
-            full_answer = ""
-            for event in generate_answer(
-                question=request.question,
-                chunks=reranked_chunks,
-                stream=True
-            ):
-                if event.get('type') == 'token':
-                    full_answer += event.get('content', '')
-                yield f"data: {json.dumps(event)}\n\n"
+            web_results = []
+            if route_info.get("needs_web_search") and current_user["role"] in ["admin", "premium"]:
+                print(f"🌐 Activating web search for: {request.question}")
+                web_results = search_financial_data(request.question)
+                if web_results:
+                    print(f"✅ Added {len(web_results)} web results to context")
+
+            print(f"🤖 Invoking agent graph...")
+            initial_state = {
+                "messages": [],
+                "question": request.question,
+                "route_info": route_info,
+                "chunks": reranked_chunks,
+                "web_results": web_results,
+                "research_output": "",
+                "verification_output": "",
+                "risk_output": "",
+                "final_answer": "",
+                "next_agent": ""
+            }
+
+            result = agent_graph.invoke(initial_state)
+            full_answer = result["final_answer"]
+            print(f"✅ Agent graph completed. Answer length: {len(full_answer)} characters")
+
+            chunk_size = 5
+            for i in range(0, len(full_answer), chunk_size):
+                chunk = full_answer[i:i+chunk_size]
+                yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'done', 'sources': reranked_chunks})}\n\n"
 
             print(f"💾 Storing in cache: {full_answer[:50]}...")
             cache_service.set_query_response(

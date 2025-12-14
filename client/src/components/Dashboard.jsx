@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useAuth, useClerk } from '@clerk/clerk-react'
 import { useToast } from './Toast'
+import ReactMarkdown from 'react-markdown'
 
 const API_URL = 'http://localhost:8000'
 
@@ -1040,9 +1041,15 @@ function ChatMessage({ message }) {
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div className={`max-w-[80%] ${isUser ? 'bg-[var(--color-accent)] text-white' : 'bg-[var(--color-bg-secondary)]'} rounded-2xl px-5 py-3`}>
-        <p className={`text-sm leading-relaxed ${isUser ? '' : 'font-serif'}`}>
-          {message.content}
-        </p>
+        {isUser ? (
+          <p className="text-sm leading-relaxed">
+            {message.content}
+          </p>
+        ) : (
+          <div className="text-sm leading-relaxed font-serif prose prose-sm max-w-none prose-headings:font-serif prose-headings:font-semibold prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-strong:font-semibold prose-table:border-collapse prose-th:border prose-th:border-[var(--color-border)] prose-th:px-3 prose-th:py-2 prose-th:bg-[var(--color-bg-tertiary)] prose-td:border prose-td:border-[var(--color-border)] prose-td:px-3 prose-td:py-2">
+            <ReactMarkdown>{message.content}</ReactMarkdown>
+          </div>
+        )}
       </div>
     </div>
   )

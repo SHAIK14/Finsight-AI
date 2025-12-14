@@ -13,3 +13,5 @@ def get_supabase_client() -> Client:
     )
 
 supabase=get_supabase_client()
+
+

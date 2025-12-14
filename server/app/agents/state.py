@@ -1,0 +1,14 @@
+from typing import TypedDict, List, Dict, Annotated
+from langgraph.graph.message import add_messages
+
+class AgentState(TypedDict):
+    messages: Annotated[List, add_messages]
+    question: str
+    route_info: Dict
+    chunks: List[Dict]
+    web_results: List[Dict]
+    research_output: str
+    verification_output: str
+    risk_output: str
+    final_answer: str
+    next_agent: str

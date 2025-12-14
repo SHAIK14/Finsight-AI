@@ -14,11 +14,9 @@ llm = ChatOpenAI(
 )
 
 
-def generate_answer(question: str, chunks: List[Dict],stream:bool = False) -> Dict:
-    
+def generate_answer(question: str, chunks: List[Dict], web_context: str = "", stream:bool = False) -> Dict:
+
     try:
-        # Step 1: Build context from chunks
-        # Format: [Doc 1, Page 12]\nChunk text\n\n[Doc 2, Page 5]\nChunk text
         context_parts = []
         for i, chunk in enumerate(chunks):
             context_parts.append(
@@ -27,23 +25,32 @@ def generate_answer(question: str, chunks: List[Dict],stream:bool = False) -> Di
 
         context = "\n\n".join(context_parts)
 
+        if web_context:
+            context += "\n\n--- RECENT WEB SEARCH RESULTS ---\n" + web_context
+
         # Step 2: Create prompt template
         # System message = instructions for GPT
         # User message = the actual question with context
         prompt_template = ChatPromptTemplate.from_messages([
-            ("system", """You are a financial document analyst. Answer questions based ONLY on the provided context.
+            ("system", """You are a financial document analyst. Answer questions based on the provided context.
+
+Context may include:
+1. Document excerpts (from uploaded PDFs)
+2. Recent web search results (for current/latest data)
 
 Rules:
+- Prefer document data for historical information
+- Use web search results for recent/current data
 - If context doesn't have the info, say "I don't have enough information"
+- Cite sources: "Page X" for documents, "Source: [title]" for web results
 - Don't make up facts
-- Cite page numbers when possible
 
 Format your answer:
-- Use markdown
-- Bullet points for lists
-- Include numbers/percentages from the documents
+- Use markdown for headers, lists, tables
+- Be concise but complete
+- Include numbers/percentages when available
 """),
-            ("user", """Context from documents:
+            ("user", """Context:
 {context}
 
 Question: {question}
