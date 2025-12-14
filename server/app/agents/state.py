@@ -4,6 +4,9 @@ from langgraph.graph.message import add_messages
 class AgentState(TypedDict):
     messages: Annotated[List, add_messages]
     question: str
+    original_question: str
+    session_id: str
+    conversation_history: List[Dict]
     route_info: Dict
     chunks: List[Dict]
     web_results: List[Dict]

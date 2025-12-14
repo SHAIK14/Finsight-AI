@@ -20,6 +20,7 @@ export function Dashboard({ user, isLoaded }) {
   const [isQuerying, setIsQuerying] = useState(false)
   const [chatHistory, setChatHistory] = useState([]) // Store past chat sessions
   const [currentChatId, setCurrentChatId] = useState(null) // Current active chat
+  const [currentSessionId, setCurrentSessionId] = useState(null) // Current server-side session ID
 
   // Fetch user profile on mount
   useEffect(() => {
@@ -296,8 +297,8 @@ export function Dashboard({ user, isLoaded }) {
     try {
       const token = await getToken()
 
-      // Step 4: Make fetch request with streaming
-      const response = await fetch(`${API_URL}/api/queries/ask`, {
+      // Step 4: Make fetch request with streaming to NEW chat-sessions endpoint
+      const response = await fetch(`${API_URL}/api/chat-sessions/query`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -305,7 +306,8 @@ export function Dashboard({ user, isLoaded }) {
         },
         body: JSON.stringify({
           question: question,
-          document_ids: uploadedDocs.map(d => d.id)
+          document_ids: uploadedDocs.map(d => d.id),
+          session_id: currentSessionId  // Include session ID for conversation history
         })
       })
 
@@ -352,7 +354,10 @@ export function Dashboard({ user, isLoaded }) {
             try {
               const event = JSON.parse(jsonStr)
 
-              if (event.type === 'token') {
+              if (event.type === 'session_created') {
+                // Server created a new session for us
+                setCurrentSessionId(event.session_id)
+              } else if (event.type === 'token') {
                 // Step 10: Append token to assistant message
                 setMessages(prev => prev.map(msg =>
                   msg.id === assistantMessageId
@@ -360,7 +365,7 @@ export function Dashboard({ user, isLoaded }) {
                     : msg
                 ))
               } else if (event.type === 'done') {
-                // Step 11: Streaming complete, add sources
+                // Step 11: Streaming complete, add sources and session_id
                 setMessages(prev => prev.map(msg =>
                   msg.id === assistantMessageId
                     ? {
@@ -371,11 +376,19 @@ export function Dashboard({ user, isLoaded }) {
                     : msg
                 ))
 
+                // Update session ID if provided
+                if (event.session_id) {
+                  setCurrentSessionId(event.session_id)
+                }
+
                 // Refresh user profile to update query count
                 await fetchUserProfile()
 
-                // Auto-save chat to database after streaming completes
-                await saveChat()
+                // Refresh chat history to show updated session
+                await fetchChatHistory()
+              } else if (event.type === 'info') {
+                // Info message (e.g., web search restricted)
+                toast.info(event.content)
               } else if (event.type === 'error') {
                 // Step 12: Handle errors
                 throw new Error(event.content)
@@ -416,22 +429,18 @@ export function Dashboard({ user, isLoaded }) {
      * Start a new chat session
      *
      * How it works:
-     * 1. Save current chat to database (if exists)
-     * 2. Clear current messages
-     * 3. Generate new chat ID
+     * 1. Clear current messages
+     * 2. Reset session ID (server will create new session on next query)
+     * 3. No need to save - backend auto-saves messages
      *
-     * Why async?
-     * - Now saves to database instead of just state
-     * - Ensures chat is persisted before clearing
+     * Why no saveChat()?
+     * - Backend now auto-saves messages to chat_sessions/chat_messages tables
+     * - Session is created/updated automatically on each query
      */
-    if (messages.length > 0) {
-      // Save current chat to database
-      await saveChat()
-    }
-
     // Clear current chat
     setMessages([])
     setCurrentChatId(Date.now().toString())
+    setCurrentSessionId(null)  // Reset session - server will create new one
   }
 
   const handleLoadChat = (chatId) => {
@@ -442,11 +451,13 @@ export function Dashboard({ user, isLoaded }) {
      * 1. Find chat in history
      * 2. Load its messages
      * 3. Set as current chat
+     * 4. Set session ID so queries continue the conversation
      */
     const chat = chatHistory.find(c => c.id === chatId)
     if (chat) {
       setMessages(chat.messages)
       setCurrentChatId(chatId)
+      setCurrentSessionId(chatId)  // Use chat ID as session ID
     }
   }
 

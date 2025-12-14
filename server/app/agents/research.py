@@ -46,39 +46,80 @@ def web_search_tool(web_results:List[Dict]) -> str:
     return "\n".join(formatted_results)
 
 def research_agent(state:AgentState) -> AgentState:
-    tools = [vector_search_tool, web_search_tool]
-    llm_with_tools = llm.bind_tools(tools)
+    # MANUALLY call tools first, then pass results to LLM
+    chunks = state.get("chunks", [])
+    web_results = state.get("web_results", [])
+
+    print(f"🔍 [Research Agent] Got {len(chunks)} chunks")
+    print(f"🔍 [Research Agent] Chunks type: {type(chunks)}")
+    if chunks:
+        print(f"🔍 [Research Agent] First chunk type: {type(chunks[0])}")
+        print(f"🔍 [Research Agent] First chunk keys: {chunks[0].keys() if isinstance(chunks[0], dict) else 'NOT A DICT'}")
+
+    # Format chunks for LLM - call function directly, not via .invoke()
+    chunks_text = vector_search_tool.func(chunks)  # Use .func to bypass Pydantic validation
+    web_text = web_search_tool.func(web_results) if web_results else "No web results"
+
+    # Now create prompt with the actual data
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a research agent analyzing financial documents.
+        ("system", """You are a research agent extracting comprehensive financial data from documents.
 
-Your job: Extract relevant information to answer the user's question.
+CRITICAL EXTRACTION RULES:
+1. ONLY use information from the Document Chunks and Web Results provided below
+2. DO NOT make up ANY company names, numbers, or data
+3. Extract ALL relevant numbers, percentages, and metrics you find
+4. Include complete context for each number:
+   - Company name
+   - Time period (quarter, year, specific date)
+   - Metric type (revenue, profit, expenses, etc.)
+   - Comparisons (YoY, QoQ if mentioned)
+5. Always cite exact page numbers from the chunks
+6. Use the EXACT company names, dates, and numbers from the documents
 
-Available tools:
-1. vector_search_tool: Read chunks from uploaded documents
-2. web_search_tool: Read recent web search results (if available)
+OUTPUT FORMAT:
+- For financial metrics: Include ALL available data points, not just one or two
+- For each metric, cite the page number
+- If comparing multiple entities/periods, structure data clearly
+- If information is not in chunks/results, say "Information not found in uploaded documents"
 
-Focus on FACTS from the sources. Cite page numbers for documents.
-Your output will be used by other agents."""),
-        ("user", "Question: {question}")
+Example good output:
+"Hindustan Copper Limited Q2 FY 2025 (ended Sept 30, 2025):
+- Revenue from Operations: ₹718.04 crore (Page 4)
+- Total Income: ₹728.95 crore (Page 4)
+- Profit Before Tax: ₹248.63 crore (Page 4)
+- Profit After Tax: ₹186.02 crore (Page 11)"
+
+Your output will be used by synthesis agent to create the final report."""),
+        ("user", """Question: {question}
+
+Document Chunks:
+{chunks_text}
+
+Web Results:
+{web_text}
+
+Extract ONLY the relevant information from above to answer the question. Use exact company names and page numbers.""")
     ])
 
-    agent_chain = prompt | llm_with_tools
+    chain = prompt | llm
 
     try:
-        response = agent_chain.invoke({
-            "question":state["question"]
+        response = chain.invoke({
+            "question": state["question"],
+            "chunks_text": chunks_text,
+            "web_text": web_text
         })
-        research_findings = response.content 
+        research_findings = response.content
     except Exception as e:
-        research_findings = f"Research agent failed: {str(e)}  "
-    
+        research_findings = f"Research agent failed: {str(e)}"
+
     state["research_output"] = research_findings
 
     agents_needed = state["route_info"].get("agents_needed", [])
     if "verification" in agents_needed:
         next_agent = "verification"
     elif "risk" in agents_needed:
-        next_agent = "risk" 
+        next_agent = "risk"
     else:
         next_agent = "synthesis"
 

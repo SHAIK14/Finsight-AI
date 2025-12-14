@@ -51,50 +51,41 @@ async def save_chat(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Save or update a chat session
+    Save or update a chat session (NEW SCHEMA - uses chat_messages table)
 
     How it works:
-    1. Check if chat exists (by id)
-    2. If exists → Update messages and updated_at
-    3. If not → Insert new chat
-
-    Why upsert?
-    - Frontend can call this after every message
-    - No need to track "is this saved yet?"
-    - Database handles duplicate prevention
-
-    Example:
-        POST /api/chat/save
-        {
-            "id": "1234567890",
-            "title": "What is Hitachi's revenue?",
-            "messages": [
-                {"id": 1, "role": "user", "content": "..."},
-                {"id": 2, "role": "assistant", "content": "..."}
-            ]
-        }
+    1. Create/update session in chat_sessions
+    2. Delete old messages for this session
+    3. Insert new messages into chat_messages table
     """
     try:
-        # Convert Pydantic models to dict for JSONB storage
-        messages_json = [msg.dict() for msg in request.messages]
-
-        # Check if chat exists
+        # Check if session exists
         existing = supabase.table("chat_sessions").select("id").eq("id", request.id).execute()
 
         if existing.data:
-            # Update existing chat
-            response = supabase.table("chat_sessions").update({
+            # Update existing session title
+            supabase.table("chat_sessions").update({
                 "title": request.title,
-                "messages": messages_json,
                 "updated_at": datetime.utcnow().isoformat()
             }).eq("id", request.id).execute()
+
+            # Delete old messages
+            supabase.table("chat_messages").delete().eq("session_id", request.id).execute()
         else:
-            # Insert new chat
-            response = supabase.table("chat_sessions").insert({
+            # Create new session
+            supabase.table("chat_sessions").insert({
                 "id": request.id,
                 "clerk_id": current_user["clerk_id"],
-                "title": request.title,
-                "messages": messages_json
+                "title": request.title
+            }).execute()
+
+        # Insert all messages
+        for msg in request.messages:
+            supabase.table("chat_messages").insert({
+                "session_id": request.id,
+                "role": msg.role,
+                "content": msg.content,
+                "sources": None
             }).execute()
 
         return {
@@ -103,6 +94,13 @@ async def save_chat(
         }
 
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"❌ Chat save error: {str(e)}")
+        print(f"📋 Traceback: {error_trace}")
+        print(f"🔍 Request ID: {request.id}")
+        print(f"🔍 Request title: {request.title}")
+        print(f"🔍 Message count: {len(request.messages)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to save chat: {str(e)}"
@@ -115,41 +113,48 @@ async def list_chats(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Get all chat sessions for current user
+    Get all chat sessions for current user (NEW SCHEMA - loads messages from chat_messages)
 
-    How it works:
-    1. Fetch chats by clerk_id
-    2. Sort by updated_at DESC (most recent first)
-    3. Limit results (pagination ready)
-
-    Why this approach?
-    - Frontend loads on mount
-    - Sorted by activity (like ChatGPT)
-    - Can add pagination later (offset + limit)
-
-    Returns:
-        {
-            "chats": [
-                {
-                    "id": "1234567890",
-                    "title": "What is revenue?",
-                    "messages": [...],
-                    "created_at": "2024-01-15T10:30:00",
-                    "updated_at": "2024-01-15T10:45:00"
-                }
-            ]
-        }
+    Returns sessions with messages array for compatibility with frontend
     """
     try:
-        response = supabase.table("chat_sessions")\
+        # Get sessions
+        sessions_response = supabase.table("chat_sessions")\
             .select("*")\
             .eq("clerk_id", current_user["clerk_id"])\
             .order("updated_at", desc=True)\
             .limit(limit)\
             .execute()
 
+        # For each session, load messages
+        chats = []
+        for session in sessions_response.data:
+            messages_response = supabase.table("chat_messages")\
+                .select("*")\
+                .eq("session_id", session["id"])\
+                .order("created_at")\
+                .execute()
+
+            # Convert to frontend format
+            messages = [
+                {
+                    "id": idx + 1,
+                    "role": msg["role"],
+                    "content": msg["content"]
+                }
+                for idx, msg in enumerate(messages_response.data)
+            ]
+
+            chats.append({
+                "id": session["id"],
+                "title": session["title"],
+                "messages": messages,
+                "created_at": session["created_at"],
+                "updated_at": session["updated_at"]
+            })
+
         return {
-            "chats": response.data
+            "chats": chats
         }
 
     except Exception as e:
@@ -165,30 +170,48 @@ async def get_chat(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Get specific chat session by ID
-
-    Security:
-    - Verify chat belongs to current user (clerk_id check)
-    - Prevents users from accessing others' chats
-
-    Use case:
-    - Deep linking (share chat URL)
-    - Reload specific chat after refresh
+    Get specific chat session by ID (NEW SCHEMA - loads messages from chat_messages)
     """
     try:
-        response = supabase.table("chat_sessions")\
+        # Get session
+        session_response = supabase.table("chat_sessions")\
             .select("*")\
             .eq("id", chat_id)\
             .eq("clerk_id", current_user["clerk_id"])\
             .execute()
 
-        if not response.data:
+        if not session_response.data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Chat not found"
             )
 
-        return response.data[0]
+        session = session_response.data[0]
+
+        # Get messages
+        messages_response = supabase.table("chat_messages")\
+            .select("*")\
+            .eq("session_id", chat_id)\
+            .order("created_at")\
+            .execute()
+
+        # Convert to frontend format
+        messages = [
+            {
+                "id": idx + 1,
+                "role": msg["role"],
+                "content": msg["content"]
+            }
+            for idx, msg in enumerate(messages_response.data)
+        ]
+
+        return {
+            "id": session["id"],
+            "title": session["title"],
+            "messages": messages,
+            "created_at": session["created_at"],
+            "updated_at": session["updated_at"]
+        }
 
     except HTTPException:
         raise

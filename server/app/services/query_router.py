@@ -19,7 +19,7 @@ def classify_query(question: str, user_role: str) -> Dict:
     prompt = ChatPromptTemplate.from_messages([
         ("system", """Analyze this financial query and return JSON with:
 - intent: factual|comparison|risk|trend|recent_data
-- needs_web_search: true if query asks about "latest", "current", "recent", "today", "now", "this week", "this month"
+- needs_web_search: true ONLY if asking about real-time data like "stock price now", "trading today". Do NOT set true for "latest earnings" from documents.
 - agents_needed: list of ["research", "verification", "risk", "synthesis"]
 - complexity: simple|medium|complex
 
@@ -27,14 +27,14 @@ Examples:
 Q: "What was Q3 revenue?"
 A: {{"intent": "factual", "needs_web_search": false, "agents_needed": ["research"], "complexity": "simple"}}
 
-Q: "What's the latest stock price?"
+Q: "What's the current stock price?"
 A: {{"intent": "recent_data", "needs_web_search": true, "agents_needed": ["research"], "complexity": "simple"}}
+
+Q: "What are the latest earnings from the PDF?"
+A: {{"intent": "factual", "needs_web_search": false, "agents_needed": ["research"], "complexity": "simple"}}
 
 Q: "Compare revenue growth vs competitors"
 A: {{"intent": "comparison", "needs_web_search": false, "agents_needed": ["research", "synthesis"], "complexity": "medium"}}
-
-Q: "What are the major risks?"
-A: {{"intent": "risk", "needs_web_search": false, "agents_needed": ["research", "risk", "verification"], "complexity": "medium"}}
 
 Return only valid JSON."""),
         ("user", "{question}")
