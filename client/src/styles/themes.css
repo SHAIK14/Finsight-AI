@@ -38,6 +38,7 @@
   --color-border-hover: #d6d3d1;
 
   --color-accent: #0f172a;  /* Deep navy */
+  --color-accent-rgb: 15, 23, 42;
   --color-accent-hover: #1e293b;
 
   --color-highlight: #d97706;  /* Amber accent */
@@ -74,6 +75,7 @@
   --color-border-hover: #3a3a3a;
 
   --color-accent: #f59e0b;  /* Darker amber for better contrast with white text */
+  --color-accent-rgb: 245, 158, 11;
   --color-accent-hover: #d97706;
 
   --color-highlight: #fbbf24;
@@ -114,6 +116,7 @@
 
   /* Primary accent - Orange warmth (like Claude) */
   --color-accent: #cb4b16;         /* orange - warm and distinctive */
+  --color-accent-rgb: 203, 75, 22;
   --color-accent-hover: #dc322f;   /* red on hover */
 
   /* Highlight - Cyan complement */

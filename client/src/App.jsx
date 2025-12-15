@@ -2,6 +2,7 @@ import { SignInButton, SignUpButton, SignedIn, SignedOut, UserButton, useUser } 
 import { ThemeToggle } from './components/ThemeToggle'
 import { Dashboard } from './components/Dashboard'
 import { ToastContainer } from './components/Toast'
+import { DashboardSkeleton } from './components/DashboardSkeleton'
 
 function App() {
   const { user, isLoaded } = useUser()
@@ -103,7 +104,11 @@ function App() {
         </SignedOut>
 
         <SignedIn>
-          <Dashboard user={user} isLoaded={isLoaded} />
+          {!isLoaded ? (
+            <DashboardSkeleton />
+          ) : (
+            <Dashboard user={user} isLoaded={isLoaded} />
+          )}
         </SignedIn>
       </main>
     </div>
