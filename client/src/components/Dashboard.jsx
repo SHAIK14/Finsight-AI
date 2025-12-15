@@ -959,15 +959,22 @@ function ChatHistoryItem({ chat, isActive, onClick, onDelete }) {
 
   const getRelativeTime = (timestamp) => {
     const now = new Date()
-    const diff = now - new Date(timestamp)
+
+    // Parse timestamp as UTC (Supabase returns UTC timestamps)
+    // If timestamp doesn't end with 'Z', it needs to be treated as UTC
+    const timestampStr = timestamp.endsWith('Z') ? timestamp : timestamp + 'Z'
+    const messageTime = new Date(timestampStr)
+
+    const diff = now - messageTime
     const minutes = Math.floor(diff / 60000)
     const hours = Math.floor(diff / 3600000)
     const days = Math.floor(diff / 86400000)
 
+    if (minutes < 1) return 'just now'
     if (minutes < 60) return `${minutes}m ago`
     if (hours < 24) return `${hours}h ago`
     if (days < 30) return `${days}d ago`
-    return new Date(timestamp).toLocaleDateString()
+    return messageTime.toLocaleDateString()
   }
 
   const handleDelete = (e) => {

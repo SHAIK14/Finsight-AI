@@ -118,13 +118,20 @@ async def list_chats(
     Returns sessions with messages array for compatibility with frontend
     """
     try:
-        # Get sessions
+        # Get sessions (force fresh data - no cache)
         sessions_response = supabase.table("chat_sessions")\
             .select("*")\
             .eq("clerk_id", current_user["clerk_id"])\
             .order("updated_at", desc=True)\
             .limit(limit)\
             .execute()
+
+        print(f"📋 [CHAT LIST] Found {len(sessions_response.data)} sessions")
+        if sessions_response.data:
+            latest = sessions_response.data[0]
+            print(f"📋 [CHAT LIST] Latest session: {latest['title'][:30]}...")
+            print(f"📋 [CHAT LIST] Created: {latest['created_at']}")
+            print(f"📋 [CHAT LIST] Updated: {latest['updated_at']}")
 
         # For each session, load messages
         chats = []
