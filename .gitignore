@@ -6,6 +6,7 @@ CLAUDE.md
 .env
 .env.local
 .env.*.local
+.env.production
 
 # Dependencies
 node_modules/
