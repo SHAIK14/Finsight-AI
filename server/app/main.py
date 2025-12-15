@@ -17,14 +17,11 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS middleware
-# Split comma-separated origins from environment variable
-# Example: CORS_ORIGINS="http://localhost:5173,https://finsight-sepia.vercel.app"
-allowed_origins = [origin.strip() for origin in settings.cors_origins.split(",")]
-
+# CORS middleware - Permissive for deployment debugging
+# Allow common dev/production origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app|http://localhost:\d+|https://.*\.railway\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
