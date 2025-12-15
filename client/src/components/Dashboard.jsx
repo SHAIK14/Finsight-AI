@@ -5,7 +5,8 @@ import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 
-const API_URL = 'http://localhost:8000'
+// Use environment variable for API URL (falls back to localhost for dev)
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 export function Dashboard({ user, isLoaded }) {
   const { getToken } = useAuth()

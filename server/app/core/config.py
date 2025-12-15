@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     max_storage_free: int = 50 * 1024 * 1024         # 50 MB total for free users
     max_storage_premium: int = 500 * 1024 * 1024     # 500 MB total for premium
 
+    # CORS origins (comma-separated list for production)
+    cors_origins: str = "http://localhost:5173"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
