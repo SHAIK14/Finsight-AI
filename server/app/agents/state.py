@@ -1,6 +1,7 @@
 from typing import TypedDict, List, Dict, Annotated
 from langgraph.graph.message import add_messages
 
+
 class AgentState(TypedDict):
     messages: Annotated[List, add_messages]
     question: str
@@ -15,3 +16,4 @@ class AgentState(TypedDict):
     risk_output: str
     final_answer: str
     next_agent: str
+    reflection_passed: bool

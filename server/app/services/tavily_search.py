@@ -19,7 +19,18 @@ def search_financial_data(query: str, max_results: int = 5) -> List[Dict]:
             query=query,
             search_depth="advanced",
             max_results=max_results,
-            include_domains=["reuters.com", "bloomberg.com", "cnbc.com", "marketwatch.com"],
+            include_domains=[
+                "moneycontrol.com",
+                "economictimes.indiatimes.com",
+                "screener.in",
+                "bseindia.com",
+                "nseindia.com",
+                "livemint.com",
+                "businesstoday.in",
+                "tickertape.in",
+                "reuters.com",
+                "bloomberg.com"
+            ],
             topic="finance"
         )
 

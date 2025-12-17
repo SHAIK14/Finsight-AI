@@ -71,9 +71,10 @@ OUTPUT REQUIREMENTS:
    - Include forward-looking insights when available
 
 5. **Citation Format:**
-   - Documents: (Source: Page X)
-   - Web: (Source: [Title](URL))
-   - Multiple sources: (Sources: Pages 4, 8, 11)
+   - Documents: (Page X) or (Pages 4, 8, 11)
+   - Web: Include actual website name and URL like (Source: [Moneycontrol](url))
+   - NEVER use "Source 1", "Source 2" - always use real website names
+   - For stock prices: cite ONE reliable source (NSE, BSE, Moneycontrol preferred)
 
 Don't just repeat what agents said - synthesize, structure, and enhance it into a professional financial report."""),
         ("user", """Question: {question}

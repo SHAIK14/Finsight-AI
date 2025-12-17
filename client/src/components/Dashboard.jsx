@@ -1,40 +1,67 @@
-import { useState, useRef, useEffect } from 'react'
-import { useAuth, useClerk } from '@clerk/clerk-react'
-import { useToast } from './Toast'
-import ReactMarkdown from 'react-markdown'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { useState, useRef, useEffect } from "react";
+import { useAuth, useClerk } from "@clerk/clerk-react";
+import { useToast } from "./Toast";
+import { DashboardSkeleton } from "./DashboardSkeleton";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 // Use environment variable for API URL (falls back to localhost for dev)
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+// Environment-based logger - only logs in development
+const isDev = import.meta.env.DEV;
+const logger = {
+  log: (...args) => isDev && console.log(...args),
+  error: (...args) => console.error(...args), // Always log errors
+  warn: (...args) => isDev && console.warn(...args),
+  info: (...args) => isDev && console.info(...args),
+};
 
 export function Dashboard({ user, isLoaded }) {
-  const { getToken } = useAuth()
-  const { signOut } = useClerk()
-  const toast = useToast()
+  const { getToken } = useAuth();
+  const { signOut } = useClerk();
+  const toast = useToast();
 
   // State management
-  const [userProfile, setUserProfile] = useState(null)
-  const [uploadedDocs, setUploadedDocs] = useState([])
-  const [messages, setMessages] = useState([])
-  const [uploading, setUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState(0)
-  const [showUsageTooltip, setShowUsageTooltip] = useState(false)
-  const [isQuerying, setIsQuerying] = useState(false)
-  const [chatHistory, setChatHistory] = useState([]) // Store past chat sessions
-  const [currentChatId, setCurrentChatId] = useState(null) // Current active chat
-  const [currentSessionId, setCurrentSessionId] = useState(null) // Current server-side session ID
-  const [currentStatus, setCurrentStatus] = useState('') // Current processing status
-  const [webSearchSources, setWebSearchSources] = useState([]) // Web search results
+  const [userProfile, setUserProfile] = useState(null);
+  const [uploadedDocs, setUploadedDocs] = useState([]);
+  const [messages, setMessages] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [showUsageTooltip, setShowUsageTooltip] = useState(false);
+  const [isQuerying, setIsQuerying] = useState(false);
+  const [chatHistory, setChatHistory] = useState([]); // Store past chat sessions
+  const [currentChatId, setCurrentChatId] = useState(null); // Current active chat
+  const [currentSessionId, setCurrentSessionId] = useState(null); // Current server-side session ID
+  const [currentStatus, setCurrentStatus] = useState(""); // Current processing status
+  const [webSearchSources, setWebSearchSources] = useState([]); // Web search results
+  const [isDataLoading, setIsDataLoading] = useState(true); // Loading state for initial data fetch
 
-  // Fetch user profile on mount
+  // Load all data in parallel on mount
   useEffect(() => {
     if (isLoaded && user) {
-      fetchUserProfile()
-      fetchDocuments()
-      fetchChatHistory()  // Load chat history from database
+      loadAllData();
     }
-  }, [isLoaded, user])
+  }, [isLoaded, user]);
+
+  const loadAllData = async () => {
+    /**
+     * Load all initial data in parallel using Promise.all
+     * This prevents the staggered UI effect where elements appear one-by-one
+     */
+    setIsDataLoading(true);
+    try {
+      await Promise.all([
+        fetchUserProfile(),
+        fetchDocuments(),
+        fetchChatHistory(),
+      ]);
+    } finally {
+      setIsDataLoading(false);
+    }
+  };
 
   const fetchUserProfile = async () => {
     /**
@@ -47,59 +74,63 @@ export function Dashboard({ user, isLoaded }) {
      * - 500 error: Backend auth middleware issue
      */
     try {
-      console.log('🔐 [Auth] Fetching user profile...')
+      logger.log("🔐 [Auth] Fetching user profile...");
 
-      const token = await getToken()
-      console.log('🔑 [Auth] Token status:', token ? '✓ Present' : '✗ Missing')
+      const token = await getToken();
+      logger.log("🔑 [Auth] Token status:", token ? "✓ Present" : "✗ Missing");
 
       if (!token) {
-        throw new Error('No authentication token available')
+        throw new Error("No authentication token available");
       }
 
       const response = await fetch(`${API_URL}/api/users/me`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
-      console.log('📡 [Auth] Response status:', response.status, response.statusText)
+      logger.log(
+        "📡 [Auth] Response status:",
+        response.status,
+        response.statusText
+      );
 
       if (!response.ok) {
-        const errorText = await response.text()
-        console.error('❌ [Auth] Failed:', errorText)
-        throw new Error(`Auth failed (${response.status}): ${errorText}`)
+        const errorText = await response.text();
+        logger.error("❌ [Auth] Failed:", errorText);
+        throw new Error(`Auth failed (${response.status}): ${errorText}`);
       }
 
-      const data = await response.json()
-      console.log('✅ [Auth] User profile loaded:', {
+      const data = await response.json();
+      logger.log("✅ [Auth] User profile loaded:", {
         role: data.role,
         email: data.email,
-        uploads: `${data.uploads_this_month}/${data.uploads_limit || '∞'}`,
-        queries: `${data.queries_this_month}/${data.queries_limit || '∞'}`
-      })
+        uploads: `${data.uploads_this_month}/${data.uploads_limit || "∞"}`,
+        queries: `${data.queries_this_month}/${data.queries_limit || "∞"}`,
+      });
 
-      setUserProfile(data)
+      setUserProfile(data);
     } catch (error) {
-      console.error('❌ [Auth] Error:', error.message)
-      toast.error('Authentication failed', error.message)
+      logger.error("❌ [Auth] Error:", error.message);
+      toast.error("Authentication failed", error.message);
 
       // If auth fails, user might need to re-login
-      if (error.message.includes('401') || error.message.includes('token')) {
-        toast.error('Session expired', 'Please sign in again')
+      if (error.message.includes("401") || error.message.includes("token")) {
+        toast.error("Session expired", "Please sign in again");
       }
     }
-  }
+  };
 
   const fetchDocuments = async () => {
     try {
-      const token = await getToken()
+      const token = await getToken();
       const response = await fetch(`${API_URL}/api/documents/`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-      const data = await response.json()
-      setUploadedDocs(data.documents || [])
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      setUploadedDocs(data.documents || []);
     } catch (error) {
-      console.error('Failed to fetch documents:', error)
+      logger.error("Failed to fetch documents:", error);
     }
-  }
+  };
 
   const fetchChatHistory = async () => {
     /**
@@ -115,16 +146,16 @@ export function Dashboard({ user, isLoaded }) {
      * - Survives page refresh
      */
     try {
-      const token = await getToken()
+      const token = await getToken();
       const response = await fetch(`${API_URL}/api/chat/list`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-      const data = await response.json()
-      setChatHistory(data.chats || [])
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      setChatHistory(data.chats || []);
     } catch (error) {
-      console.error('Failed to fetch chat history:', error)
+      logger.error("Failed to fetch chat history:", error);
     }
-  }
+  };
 
   const saveChat = async () => {
     /**
@@ -144,149 +175,151 @@ export function Dashboard({ user, isLoaded }) {
      * - No manual "Save" button needed
      * - ChatGPT-style seamless experience
      */
-    if (messages.length === 0) return
+    if (messages.length === 0) return;
 
     try {
-      const token = await getToken()
-      const chatId = currentChatId || Date.now().toString()
+      const token = await getToken();
+      const chatId = currentChatId || Date.now().toString();
 
       await fetch(`${API_URL}/api/chat/save`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           id: chatId,
-          title: messages[0]?.content.substring(0, 50) || 'New Chat',  // First 50 chars
-          messages: messages
-        })
-      })
+          title: messages[0]?.content.substring(0, 50) || "New Chat", // First 50 chars
+          messages: messages,
+        }),
+      });
 
       // Update currentChatId if it was null
       if (!currentChatId) {
-        setCurrentChatId(chatId)
+        setCurrentChatId(chatId);
       }
 
       // Refresh chat history to show in sidebar
-      await fetchChatHistory()
+      await fetchChatHistory();
     } catch (error) {
-      console.error('Failed to save chat:', error)
+      logger.error("Failed to save chat:", error);
     }
-  }
+  };
 
   const handleUpload = async (file) => {
     // Check if user can upload (free users have limit)
-    if (userProfile?.role === 'free' && userProfile?.uploads_limit) {
+    if (userProfile?.role === "free" && userProfile?.uploads_limit) {
       if (userProfile.uploads_this_month >= userProfile.uploads_limit) {
-        toast.error('Upload limit reached', `Free tier allows ${userProfile.uploads_limit} upload per month`)
-        return
+        toast.error(
+          "Upload limit reached",
+          `Free tier allows ${userProfile.uploads_limit} upload per month`
+        );
+        return;
       }
     }
 
-    if (!file.type.includes('pdf')) {
-      toast.error('Invalid file type', 'Please upload a PDF file')
-      return
+    if (!file.type.includes("pdf")) {
+      toast.error("Invalid file type", "Please upload a PDF file");
+      return;
     }
 
-    setUploading(true)
-    setUploadProgress(0)
+    setUploading(true);
+    setUploadProgress(0);
 
     try {
-      const token = await getToken()
-      const formData = new FormData()
-      formData.append('file', file)
+      const token = await getToken();
+      const formData = new FormData();
+      formData.append("file", file);
 
       const progressInterval = setInterval(() => {
-        setUploadProgress(prev => Math.min(prev + 10, 90))
-      }, 200)
+        setUploadProgress((prev) => Math.min(prev + 10, 90));
+      }, 200);
 
       const response = await fetch(`${API_URL}/api/documents/upload`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData
-      })
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
 
-      clearInterval(progressInterval)
+      clearInterval(progressInterval);
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || 'Upload failed')
+        const error = await response.json();
+        throw new Error(error.detail || "Upload failed");
       }
 
-      const data = await response.json()
-      setUploadProgress(100)
+      const data = await response.json();
+      setUploadProgress(100);
 
       // Refresh documents and user profile
-      await fetchDocuments()
-      await fetchUserProfile()
+      await fetchDocuments();
+      await fetchUserProfile();
 
       setTimeout(() => {
-        setUploading(false)
-        setUploadProgress(0)
-        toast.success('Upload complete!', `${file.name} uploaded successfully`)
-      }, 500)
-
+        setUploading(false);
+        setUploadProgress(0);
+        toast.success("Upload complete!", `${file.name} uploaded successfully`);
+      }, 500);
     } catch (error) {
-      console.error('Upload error:', error)
-      toast.error('Upload failed', error.message)
-      setUploading(false)
-      setUploadProgress(0)
+      logger.error("Upload error:", error);
+      toast.error("Upload failed", error.message);
+      setUploading(false);
+      setUploadProgress(0);
     }
-  }
+  };
 
   const handleDeleteDoc = async (docId) => {
     try {
-      const token = await getToken()
+      const token = await getToken();
       const response = await fetch(`${API_URL}/api/documents/${docId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || 'Delete failed')
+        const error = await response.json();
+        throw new Error(error.detail || "Delete failed");
       }
 
       // Refresh documents list and user profile
-      await fetchDocuments()
-      await fetchUserProfile()
+      await fetchDocuments();
+      await fetchUserProfile();
 
-      toast.success('Document deleted', 'Document removed successfully')
+      toast.success("Document deleted", "Document removed successfully");
     } catch (error) {
-      console.error('Delete error:', error)
-      toast.error('Delete failed', error.message)
+      logger.error("Delete error:", error);
+      toast.error("Delete failed", error.message);
     }
-  }
+  };
 
   const handleDeleteChat = async (chatId) => {
     try {
-      const token = await getToken()
+      const token = await getToken();
       const response = await fetch(`${API_URL}/api/chat/${chatId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || 'Delete failed')
+        const error = await response.json();
+        throw new Error(error.detail || "Delete failed");
       }
 
       // If deleted chat was active, clear current chat
       if (chatId === currentChatId) {
-        setMessages([])
-        setCurrentChatId(null)
+        setMessages([]);
+        setCurrentChatId(null);
       }
 
       // Refresh chat history
-      await fetchChatHistory()
+      await fetchChatHistory();
 
-      toast.success('Chat deleted', 'Chat removed successfully')
+      toast.success("Chat deleted", "Chat removed successfully");
     } catch (error) {
-      console.error('Delete chat error:', error)
-      toast.error('Delete failed', error.message)
+      logger.error("Delete chat error:", error);
+      toast.error("Delete failed", error.message);
     }
-  }
+  };
 
   const handleQuery = async (question) => {
     /**
@@ -308,196 +341,212 @@ export function Dashboard({ user, isLoaded }) {
      */
 
     // Step 1: Rate limit check
-    if (userProfile?.role === 'free' && userProfile?.queries_limit) {
+    if (userProfile?.role === "free" && userProfile?.queries_limit) {
       if (userProfile.queries_this_month >= userProfile.queries_limit) {
-        toast.error('Query limit reached', `Free tier allows ${userProfile.queries_limit} queries per month`)
-        return
+        toast.error(
+          "Query limit reached",
+          `Free tier allows ${userProfile.queries_limit} queries per month`
+        );
+        return;
       }
     }
 
-    setIsQuerying(true)
-    setCurrentStatus('Starting...')
-    setWebSearchSources([])
+    setIsQuerying(true);
+    setCurrentStatus("Starting...");
+    setWebSearchSources([]);
 
     // Step 2: Add user message to chat
     const userMessage = {
       id: Date.now(),
-      role: 'user',
+      role: "user",
       content: question,
-      timestamp: new Date()
-    }
-    setMessages(prev => [...prev, userMessage])
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, userMessage]);
 
     // Step 3: Create empty assistant message that we'll fill token-by-token
-    const assistantMessageId = Date.now() + 1
+    const assistantMessageId = Date.now() + 1;
     const assistantMessage = {
       id: assistantMessageId,
-      role: 'assistant',
-      content: '',  // Start empty, we'll append tokens
+      role: "assistant",
+      content: "", // Start empty, we'll append tokens
       sources: [],
       webSources: [],
-      streaming: true,  // Flag to show typing indicator
-      status: 'Starting...',  // Current processing status
-      timestamp: new Date()
-    }
-    setMessages(prev => [...prev, assistantMessage])
+      streaming: true, // Flag to show typing indicator
+      status: "Starting...", // Current processing status
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, assistantMessage]);
 
     try {
-      const token = await getToken()
+      const token = await getToken();
 
       // Step 4: Make fetch request with streaming to NEW chat-sessions endpoint
       const response = await fetch(`${API_URL}/api/chat-sessions/query`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           question: question,
-          document_ids: uploadedDocs.map(d => d.id),
-          session_id: currentSessionId  // Include session ID for conversation history
-        })
-      })
+          document_ids: uploadedDocs.map((d) => d.id),
+          session_id: currentSessionId, // Include session ID for conversation history
+        }),
+      });
 
       if (!response.ok) {
-        throw new Error('Query failed')
+        throw new Error("Query failed");
       }
 
       // Step 5: Read the stream using response.body
       // response.body is a ReadableStream - we read it chunk by chunk
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()  // Converts bytes to text
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder(); // Converts bytes to text
 
-      let buffer = ''  // Store incomplete SSE messages
+      let buffer = ""; // Store incomplete SSE messages
 
       // Step 6: Read stream in a loop
       while (true) {
         // Read one chunk from the stream
-        const { done, value } = await reader.read()
+        const { done, value } = await reader.read();
 
         if (done) {
           // Stream finished
-          break
+          break;
         }
 
         // Step 7: Decode chunk from bytes to text
         // value is Uint8Array like: [100, 97, 116, 97, 58, ...]
         // decoder turns it into string: "data: {...}\n\n"
-        const chunk = decoder.decode(value, { stream: true })
-        buffer += chunk
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
 
         // Step 8: Process complete SSE messages
         // SSE messages end with \n\n, so we split by that
-        const lines = buffer.split('\n\n')
+        const lines = buffer.split("\n\n");
 
         // Last element might be incomplete, keep it in buffer
-        buffer = lines.pop() || ''
+        buffer = lines.pop() || "";
 
         // Step 9: Process each complete message
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
+          if (line.startsWith("data: ")) {
             // Remove "data: " prefix and parse JSON
-            const jsonStr = line.slice(6)  // Skip "data: "
+            const jsonStr = line.slice(6); // Skip "data: "
 
             try {
-              const event = JSON.parse(jsonStr)
-              console.log('📨 [SSE Event]', event.type, event)
+              const event = JSON.parse(jsonStr);
+              logger.log("📨 [SSE Event]", event.type, event);
 
-              if (event.type === 'session_created') {
+              if (event.type === "session_created") {
                 // Server created a new session for us
-                console.log('🆕 [Session] Created:', event.session_id)
-                setCurrentSessionId(event.session_id)
-              } else if (event.type === 'status') {
+                logger.log("🆕 [Session] Created:", event.session_id);
+                setCurrentSessionId(event.session_id);
+              } else if (event.type === "status") {
                 // Update current status in the assistant message
-                console.log('📊 [Status]', event.content)
-                setCurrentStatus(event.content)
-                setMessages(prev => prev.map(msg =>
-                  msg.id === assistantMessageId
-                    ? { ...msg, status: event.content }
-                    : msg
-                ))
-              } else if (event.type === 'web_search') {
+                logger.log("📊 [Status]", event.content);
+                setCurrentStatus(event.content);
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? { ...msg, status: event.content }
+                      : msg
+                  )
+                );
+              } else if (event.type === "web_search") {
                 // Web search sources found - update message with web sources
-                console.log('🌐 [Web Search]', event.sources.length, 'sources found')
-                setWebSearchSources(event.sources)
-                setCurrentStatus('Web search complete')
+                logger.log(
+                  "🌐 [Web Search]",
+                  event.sources.length,
+                  "sources found"
+                );
+                setWebSearchSources(event.sources);
+                setCurrentStatus("Web search complete");
                 // Update assistant message to show web sources in KineticProgressIndicator
-                setMessages(prev => prev.map(msg =>
-                  msg.id === assistantMessageId
-                    ? { ...msg, webSources: event.sources }
-                    : msg
-                ))
-              } else if (event.type === 'token') {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? { ...msg, webSources: event.sources }
+                      : msg
+                  )
+                );
+              } else if (event.type === "token") {
                 // Step 10: Append token to assistant message
-                setMessages(prev => prev.map(msg =>
-                  msg.id === assistantMessageId
-                    ? { ...msg, content: msg.content + event.content }
-                    : msg
-                ))
-              } else if (event.type === 'done') {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? { ...msg, content: msg.content + event.content }
+                      : msg
+                  )
+                );
+              } else if (event.type === "done") {
                 // Step 11: Streaming complete, add sources and session_id
-                setMessages(prev => prev.map(msg =>
-                  msg.id === assistantMessageId
-                    ? {
-                        ...msg,
-                        sources: event.sources,
-                        webSources: event.web_sources || [],
-                        streaming: false  // Remove typing indicator
-                      }
-                    : msg
-                ))
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? {
+                          ...msg,
+                          sources: event.sources,
+                          webSources: event.web_sources || [],
+                          streaming: false, // Remove typing indicator
+                        }
+                      : msg
+                  )
+                );
 
                 // Update session ID if provided
                 if (event.session_id) {
-                  setCurrentSessionId(event.session_id)
+                  setCurrentSessionId(event.session_id);
                 }
 
                 // Clear status
-                setCurrentStatus('')
-                setWebSearchSources([])
+                setCurrentStatus("");
+                setWebSearchSources([]);
 
                 // Refresh user profile to update query count
-                await fetchUserProfile()
+                await fetchUserProfile();
 
                 // Refresh chat history to show updated session
-                await fetchChatHistory()
-              } else if (event.type === 'info') {
+                await fetchChatHistory();
+              } else if (event.type === "info") {
                 // Info message (e.g., web search restricted)
-                toast.info(event.content)
-              } else if (event.type === 'error') {
+                toast.info(event.content);
+              } else if (event.type === "error") {
                 // Step 12: Handle errors
-                throw new Error(event.content)
+                throw new Error(event.content);
               }
             } catch (parseError) {
-              console.error('Failed to parse SSE event:', parseError)
+              logger.error("Failed to parse SSE event:", parseError);
             }
           }
         }
       }
-
     } catch (error) {
-      console.error('Query error:', error)
-      toast.error('Query failed', error.message)
+      logger.error("Query error:", error);
+      toast.error("Query failed", error.message);
 
       // Update assistant message with error
-      setMessages(prev => prev.map(msg =>
-        msg.id === assistantMessageId
-          ? {
-              ...msg,
-              content: `Sorry, I encountered an error: ${error.message}`,
-              error: true,
-              streaming: false
-            }
-          : msg
-      ))
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === assistantMessageId
+            ? {
+                ...msg,
+                content: `Sorry, I encountered an error: ${error.message}`,
+                error: true,
+                streaming: false,
+              }
+            : msg
+        )
+      );
     } finally {
-      setIsQuerying(false)
+      setIsQuerying(false);
     }
-  }
+  };
 
   const handleLogout = () => {
-    signOut()
-  }
+    signOut();
+  };
 
   const handleNewChat = async () => {
     /**
@@ -513,10 +562,10 @@ export function Dashboard({ user, isLoaded }) {
      * - Session is created/updated automatically on each query
      */
     // Clear current chat
-    setMessages([])
-    setCurrentChatId(Date.now().toString())
-    setCurrentSessionId(null)  // Reset session - server will create new one
-  }
+    setMessages([]);
+    setCurrentChatId(Date.now().toString());
+    setCurrentSessionId(null); // Reset session - server will create new one
+  };
 
   const handleLoadChat = (chatId) => {
     /**
@@ -528,12 +577,17 @@ export function Dashboard({ user, isLoaded }) {
      * 3. Set as current chat
      * 4. Set session ID so queries continue the conversation
      */
-    const chat = chatHistory.find(c => c.id === chatId)
+    const chat = chatHistory.find((c) => c.id === chatId);
     if (chat) {
-      setMessages(chat.messages)
-      setCurrentChatId(chatId)
-      setCurrentSessionId(chatId)  // Use chat ID as session ID
+      setMessages(chat.messages);
+      setCurrentChatId(chatId);
+      setCurrentSessionId(chatId); // Use chat ID as session ID
     }
+  };
+
+  // Show skeleton while all data is loading
+  if (isDataLoading) {
+    return <DashboardSkeleton />;
   }
 
   return (
@@ -568,12 +622,25 @@ export function Dashboard({ user, isLoaded }) {
         onQuery={handleQuery}
       />
     </div>
-  )
+  );
 }
 
 // Sidebar Component - ChatGPT Style
-function Sidebar({ user, userProfile, uploadedDocs, chatHistory, currentChatId, onLogout, onDeleteDoc, onDeleteChat, onNewChat, onLoadChat, showUsageTooltip, setShowUsageTooltip }) {
-  const [docsExpanded, setDocsExpanded] = useState(true)
+function Sidebar({
+  user,
+  userProfile,
+  uploadedDocs,
+  chatHistory,
+  currentChatId,
+  onLogout,
+  onDeleteDoc,
+  onDeleteChat,
+  onNewChat,
+  onLoadChat,
+  showUsageTooltip,
+  setShowUsageTooltip,
+}) {
+  const [docsExpanded, setDocsExpanded] = useState(true);
 
   return (
     <div className="w-64 border-r border-[var(--color-border)] bg-[var(--color-bg-secondary)] flex flex-col">
@@ -583,8 +650,18 @@ function Sidebar({ user, userProfile, uploadedDocs, chatHistory, currentChatId, 
           onClick={onNewChat}
           className="w-full flex items-center gap-3 px-4 py-3 bg-[var(--color-bg-primary)] hover:bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-lg transition-colors text-sm font-medium"
         >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          <svg
+            className="w-4 h-4"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 4v16m8-8H4"
+            />
           </svg>
           New Chat
         </button>
@@ -602,12 +679,19 @@ function Sidebar({ user, userProfile, uploadedDocs, chatHistory, currentChatId, 
               Documents ({uploadedDocs.length})
             </h3>
             <svg
-              className={`w-4 h-4 text-[var(--color-text-tertiary)] transition-transform ${docsExpanded ? 'rotate-180' : ''}`}
+              className={`w-4 h-4 text-[var(--color-text-tertiary)] transition-transform ${
+                docsExpanded ? "rotate-180" : ""
+              }`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 9l-7 7-7-7"
+              />
             </svg>
           </button>
 
@@ -623,7 +707,10 @@ function Sidebar({ user, userProfile, uploadedDocs, chatHistory, currentChatId, 
                     <DocumentItem
                       key={doc.id}
                       document={doc}
-                      canDelete={userProfile?.role === 'premium' || userProfile?.role === 'admin'}
+                      canDelete={
+                        userProfile?.role === "premium" ||
+                        userProfile?.role === "admin"
+                      }
                       onDelete={onDeleteDoc}
                     />
                   ))}
@@ -654,52 +741,77 @@ function Sidebar({ user, userProfile, uploadedDocs, chatHistory, currentChatId, 
         )}
       </div>
 
-
       {/* Profile Section - Bottom */}
       <div className="border-t border-[var(--color-border)] p-4">
         <div className="flex items-center gap-3">
           {/* Avatar */}
           <div className="w-10 h-10 rounded-full bg-[var(--color-accent)]/10 flex items-center justify-center text-[var(--color-accent)] font-semibold flex-shrink-0">
-            {user?.firstName?.[0] || 'U'}
+            {user?.firstName?.[0] || "U"}
           </div>
 
           {/* Profile Info */}
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium truncate">
-              {user?.firstName || 'User'}
+              {user?.firstName || "User"}
             </div>
 
             {/* Plan Badge with Tooltip */}
             <div className="relative">
-              <button
-                onMouseEnter={() => setShowUsageTooltip(true)}
-                onMouseLeave={() => setShowUsageTooltip(false)}
-                className="inline-flex items-center gap-1 text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] transition-colors"
-              >
-                <span className="capitalize">{userProfile?.role || 'free'} Plan</span>
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </button>
+              {!userProfile ? (
+                // Clean loading shimmer for plan badge
+                <div className="h-4 w-16 bg-[var(--color-bg-tertiary)] rounded animate-pulse" />
+              ) : (
+                <button
+                  onMouseEnter={() => setShowUsageTooltip(true)}
+                  onMouseLeave={() => setShowUsageTooltip(false)}
+                  className="inline-flex items-center gap-1 text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] transition-colors"
+                >
+                  <span className="capitalize">{userProfile.role} Plan</span>
+                  <svg
+                    className="w-3 h-3"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                </button>
+              )}
 
               {/* Usage Tooltip */}
               {showUsageTooltip && userProfile && (
                 <div className="absolute bottom-full left-0 mb-2 w-56 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg shadow-[var(--shadow-lg)] p-3 z-10">
-                  <div className="text-xs font-medium mb-3">Usage This Month</div>
+                  <div className="text-xs font-medium mb-3">
+                    Usage This Month
+                  </div>
 
                   {/* Uploads */}
                   <div className="mb-3">
                     <div className="flex items-center justify-between text-xs mb-1">
-                      <span className="text-[var(--color-text-secondary)]">Uploads</span>
+                      <span className="text-[var(--color-text-secondary)]">
+                        Uploads
+                      </span>
                       <span className="font-mono">
-                        {userProfile.uploads_this_month}/{userProfile.uploads_limit || '∞'}
+                        {userProfile.uploads_this_month}/
+                        {userProfile.uploads_limit || "∞"}
                       </span>
                     </div>
                     {userProfile.uploads_limit && (
                       <div className="h-1 bg-[var(--color-bg-secondary)] rounded-full overflow-hidden">
                         <div
                           className="h-full bg-[var(--color-accent)]"
-                          style={{ width: `${(userProfile.uploads_this_month / userProfile.uploads_limit) * 100}%` }}
+                          style={{
+                            width: `${
+                              (userProfile.uploads_this_month /
+                                userProfile.uploads_limit) *
+                              100
+                            }%`,
+                          }}
                         />
                       </div>
                     )}
@@ -708,22 +820,31 @@ function Sidebar({ user, userProfile, uploadedDocs, chatHistory, currentChatId, 
                   {/* Queries */}
                   <div>
                     <div className="flex items-center justify-between text-xs mb-1">
-                      <span className="text-[var(--color-text-secondary)]">Queries</span>
+                      <span className="text-[var(--color-text-secondary)]">
+                        Queries
+                      </span>
                       <span className="font-mono">
-                        {userProfile.queries_this_month}/{userProfile.queries_limit || '∞'}
+                        {userProfile.queries_this_month}/
+                        {userProfile.queries_limit || "∞"}
                       </span>
                     </div>
                     {userProfile.queries_limit && (
                       <div className="h-1 bg-[var(--color-bg-secondary)] rounded-full overflow-hidden">
                         <div
                           className="h-full bg-[var(--color-accent)]"
-                          style={{ width: `${(userProfile.queries_this_month / userProfile.queries_limit) * 100}%` }}
+                          style={{
+                            width: `${
+                              (userProfile.queries_this_month /
+                                userProfile.queries_limit) *
+                              100
+                            }%`,
+                          }}
                         />
                       </div>
                     )}
                   </div>
 
-                  {userProfile.role === 'free' && (
+                  {userProfile.role === "free" && (
                     <button className="w-full mt-3 px-3 py-1.5 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-xs font-medium rounded-md transition-colors">
                       Upgrade to Premium
                     </button>
@@ -739,68 +860,89 @@ function Sidebar({ user, userProfile, uploadedDocs, chatHistory, currentChatId, 
             className="p-2 hover:bg-[var(--color-bg-tertiary)] rounded-lg transition-colors text-[var(--color-text-tertiary)] hover:text-[var(--color-error)]"
             title="Sign out"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+              />
             </svg>
           </button>
         </div>
       </div>
     </div>
-  )
+  );
 }
 
 // Chat Area Component
-function ChatArea({ uploadedDocs, messages, uploading, uploadProgress, userProfile, isQuerying, currentStatus, webSearchSources, onUpload, onQuery }) {
-  const fileInputRef = useRef(null)
-  const [query, setQuery] = useState('')
-  const [showUploadPrompt, setShowUploadPrompt] = useState(false)
+function ChatArea({
+  uploadedDocs,
+  messages,
+  uploading,
+  uploadProgress,
+  userProfile,
+  isQuerying,
+  currentStatus,
+  webSearchSources,
+  onUpload,
+  onQuery,
+}) {
+  const fileInputRef = useRef(null);
+  const [query, setQuery] = useState("");
+  const [showUploadPrompt, setShowUploadPrompt] = useState(false);
 
   const suggestedQueries = [
-    'What was the revenue growth?',
-    'Summarize key financial risks',
-    'Compare quarterly performance',
-    'Extract all metrics and KPIs'
-  ]
+    "What was the revenue growth?",
+    "Summarize key financial risks",
+    "Compare quarterly performance",
+    "Extract all metrics and KPIs",
+  ];
 
   const handleSubmit = (e) => {
-    e.preventDefault()
-    if (!query.trim()) return
+    e.preventDefault();
+    if (!query.trim()) return;
 
     if (uploadedDocs.length === 0) {
-      setShowUploadPrompt(true)
-      return
+      setShowUploadPrompt(true);
+      return;
     }
 
     // Send query to backend
-    onQuery(query)
-    setQuery('')
-  }
+    onQuery(query);
+    setQuery("");
+  };
 
   const handleSuggestedQuery = (suggestedQuery) => {
     if (uploadedDocs.length === 0) {
-      setShowUploadPrompt(true)
-      return
+      setShowUploadPrompt(true);
+      return;
     }
-    onQuery(suggestedQuery)
-  }
+    onQuery(suggestedQuery);
+  };
 
   const handleFileSelect = (e) => {
-    const file = e.target.files?.[0]
+    const file = e.target.files?.[0];
     if (file) {
-      onUpload(file)
-      setShowUploadPrompt(false)
+      onUpload(file);
+      setShowUploadPrompt(false);
     }
-  }
+  };
 
-  const hasDocuments = uploadedDocs.length > 0
-  const hasMessages = messages.length > 0
+  const hasDocuments = uploadedDocs.length > 0;
+  const hasMessages = messages.length > 0;
 
   return (
     <div className="flex-1 flex flex-col">
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto">
-        {!hasDocuments && !hasMessages ? (
-          // Empty State - Show suggested queries
+        {!hasMessages ? (
+          // Empty Chat State - Show suggested queries (even if user has documents/previous chats)
           <div className="h-full flex items-center justify-center px-6">
             <div className="max-w-2xl w-full">
               <div className="text-center mb-12">
@@ -808,7 +950,9 @@ function ChatArea({ uploadedDocs, messages, uploading, uploadProgress, userProfi
                   What would you like to know?
                 </h2>
                 <p className="text-[var(--color-text-secondary)] text-base leading-relaxed">
-                  Upload a financial document to begin analyzing with AI
+                  {hasDocuments
+                    ? "Ask anything about your uploaded documents"
+                    : "Upload a financial document to begin analyzing with AI"}
                 </p>
               </div>
 
@@ -817,14 +961,30 @@ function ChatArea({ uploadedDocs, messages, uploading, uploadProgress, userProfi
                   <button
                     key={i}
                     onClick={() => {
-                      setQuery(suggestion)
-                      setShowUploadPrompt(true)
+                      if (hasDocuments) {
+                        // User has documents - run the query directly
+                        onQuery(suggestion);
+                      } else {
+                        // No documents - show upload prompt
+                        setQuery(suggestion);
+                        setShowUploadPrompt(true);
+                      }
                     }}
                     className="w-full text-left px-5 py-4 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] hover:border-[var(--color-accent)] rounded-xl text-[var(--color-text-primary)] transition-all group"
                   >
                     <div className="flex items-center gap-3">
-                      <svg className="w-4 h-4 text-[var(--color-text-tertiary)] group-hover:text-[var(--color-accent)] transition-colors flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      <svg
+                        className="w-4 h-4 text-[var(--color-text-tertiary)] group-hover:text-[var(--color-accent)] transition-colors flex-shrink-0"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                        />
                       </svg>
                       <span className="text-sm">{suggestion}</span>
                     </div>
@@ -832,18 +992,29 @@ function ChatArea({ uploadedDocs, messages, uploading, uploadProgress, userProfi
                 ))}
               </div>
 
-              {showUploadPrompt && (
+              {showUploadPrompt && !hasDocuments && (
                 <div className="mt-6 p-4 bg-[var(--color-accent)]/5 border border-[var(--color-accent)]/20 rounded-xl">
                   <div className="flex items-start gap-3">
-                    <svg className="w-5 h-5 text-[var(--color-accent)] flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <svg
+                      className="w-5 h-5 text-[var(--color-accent)] flex-shrink-0 mt-0.5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
                     </svg>
                     <div>
                       <p className="text-sm font-medium text-[var(--color-text-primary)] mb-2">
                         Upload a document first
                       </p>
                       <p className="text-xs text-[var(--color-text-secondary)]">
-                        Click the paperclip icon below to upload a financial document (10-K, 10-Q, or earnings report).
+                        Click the paperclip icon below to upload a financial
+                        document (10-K, 10-Q, or earnings report).
                       </p>
                     </div>
                   </div>
@@ -885,22 +1056,43 @@ function ChatArea({ uploadedDocs, messages, uploading, uploadProgress, userProfi
                 {uploading ? (
                   <div className="relative w-5 h-5">
                     <svg className="w-5 h-5 -rotate-90" viewBox="0 0 24 24">
-                      <circle cx="12" cy="12" r="10" stroke="var(--color-border)" strokeWidth="2" fill="none" />
                       <circle
-                        cx="12" cy="12" r="10"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="var(--color-border)"
+                        strokeWidth="2"
+                        fill="none"
+                      />
+                      <circle
+                        cx="12"
+                        cy="12"
+                        r="10"
                         stroke="var(--color-accent)"
                         strokeWidth="2"
                         fill="none"
                         strokeDasharray={`${2 * Math.PI * 10}`}
-                        strokeDashoffset={`${2 * Math.PI * 10 * (1 - uploadProgress / 100)}`}
+                        strokeDashoffset={`${
+                          2 * Math.PI * 10 * (1 - uploadProgress / 100)
+                        }`}
                         strokeLinecap="round"
                         className="transition-all duration-300"
                       />
                     </svg>
                   </div>
                 ) : (
-                  <svg className="w-5 h-5 text-[var(--color-text-tertiary)] group-hover:text-[var(--color-accent)] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  <svg
+                    className="w-5 h-5 text-[var(--color-text-tertiary)] group-hover:text-[var(--color-accent)] transition-colors"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+                    />
                   </svg>
                 )}
               </button>
@@ -918,8 +1110,18 @@ function ChatArea({ uploadedDocs, messages, uploading, uploadProgress, userProfi
                 disabled={!query.trim() || isQuerying}
                 className="p-2.5 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M14 5l7 7m0 0l-7 7m7-7H3"
+                  />
                 </svg>
               </button>
             </div>
@@ -928,32 +1130,47 @@ function ChatArea({ uploadedDocs, messages, uploading, uploadProgress, userProfi
           {userProfile && (
             <p className="text-xs text-[var(--color-text-tertiary)] text-center mt-3">
               {userProfile.uploads_limit
-                ? `${userProfile.uploads_limit - userProfile.uploads_this_month} upload${userProfile.uploads_limit - userProfile.uploads_this_month === 1 ? '' : 's'} remaining`
-                : 'Unlimited uploads'
-              }
+                ? `${
+                    userProfile.uploads_limit - userProfile.uploads_this_month
+                  } upload${
+                    userProfile.uploads_limit -
+                      userProfile.uploads_this_month ===
+                    1
+                      ? ""
+                      : "s"
+                  } remaining`
+                : "Unlimited uploads"}
             </p>
           )}
         </div>
       </div>
     </div>
-  )
+  );
 }
 
 // Document Item Component - ChatGPT Style (no borders, clean hover)
 function DocumentItem({ document, canDelete, onDelete }) {
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const handleDelete = () => {
-    onDelete(document.id)
-    setShowDeleteConfirm(false)
-  }
+    onDelete(document.id);
+    setShowDeleteConfirm(false);
+  };
 
   return (
     <div className="group relative px-2 py-2.5 hover:bg-[var(--color-bg-tertiary)] rounded-md transition-colors cursor-default">
       <div className="flex items-start gap-2">
         {/* PDF Icon */}
-        <svg className="w-3.5 h-3.5 text-[var(--color-error)] flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-          <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+        <svg
+          className="w-3.5 h-3.5 text-[var(--color-error)] flex-shrink-0 mt-0.5"
+          fill="currentColor"
+          viewBox="0 0 20 20"
+        >
+          <path
+            fillRule="evenodd"
+            d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"
+            clipRule="evenodd"
+          />
         </svg>
 
         {/* Document Info */}
@@ -973,8 +1190,18 @@ function DocumentItem({ document, canDelete, onDelete }) {
             className="opacity-0 group-hover:opacity-100 p-1 hover:bg-[var(--color-error)]/10 rounded transition-all flex-shrink-0"
             title="Delete document"
           >
-            <svg className="w-3.5 h-3.5 text-[var(--color-error)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            <svg
+              className="w-3.5 h-3.5 text-[var(--color-error)]"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
             </svg>
           </button>
         )}
@@ -983,7 +1210,9 @@ function DocumentItem({ document, canDelete, onDelete }) {
       {/* Delete Confirmation Tooltip */}
       {showDeleteConfirm && (
         <div className="absolute top-full left-0 mt-1 w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg shadow-[var(--shadow-lg)] p-2 z-20">
-          <p className="text-xs text-[var(--color-text-secondary)] mb-2">Delete this document?</p>
+          <p className="text-xs text-[var(--color-text-secondary)] mb-2">
+            Delete this document?
+          </p>
           <div className="flex gap-1">
             <button
               onClick={handleDelete}
@@ -1001,7 +1230,7 @@ function DocumentItem({ document, canDelete, onDelete }) {
         </div>
       )}
     </div>
-  )
+  );
 }
 
 // Chat History Item Component - ChatGPT Style
@@ -1015,33 +1244,33 @@ function ChatHistoryItem({ chat, isActive, onClick, onDelete }) {
    * - Active state highlight
    * - Delete button with confirmation modal on hover
    */
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const getRelativeTime = (timestamp) => {
-    const now = new Date()
+    const now = new Date();
 
     // Parse timestamp as UTC (Supabase returns UTC timestamps)
     // If timestamp doesn't end with 'Z', it needs to be treated as UTC
-    const timestampStr = timestamp.endsWith('Z') ? timestamp : timestamp + 'Z'
-    const messageTime = new Date(timestampStr)
+    const timestampStr = timestamp.endsWith("Z") ? timestamp : timestamp + "Z";
+    const messageTime = new Date(timestampStr);
 
-    const diff = now - messageTime
-    const minutes = Math.floor(diff / 60000)
-    const hours = Math.floor(diff / 3600000)
-    const days = Math.floor(diff / 86400000)
+    const diff = now - messageTime;
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
 
-    if (minutes < 1) return 'just now'
-    if (minutes < 60) return `${minutes}m ago`
-    if (hours < 24) return `${hours}h ago`
-    if (days < 30) return `${days}d ago`
-    return messageTime.toLocaleDateString()
-  }
+    if (minutes < 1) return "just now";
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    if (days < 30) return `${days}d ago`;
+    return messageTime.toLocaleDateString();
+  };
 
   const handleDelete = (e) => {
-    e.stopPropagation()
-    onDelete(chat.id)
-    setShowDeleteConfirm(false)
-  }
+    e.stopPropagation();
+    onDelete(chat.id);
+    setShowDeleteConfirm(false);
+  };
 
   return (
     <div className="group relative">
@@ -1049,21 +1278,29 @@ function ChatHistoryItem({ chat, isActive, onClick, onDelete }) {
         onClick={onClick}
         className={`w-full text-left px-2 py-2.5 rounded-md transition-colors ${
           isActive
-            ? 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]'
-            : 'hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]'
+            ? "bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]"
+            : "hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]"
         }`}
       >
         <div className="flex items-start gap-2">
           {/* Chat Icon */}
-          <svg className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          <svg
+            className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+            />
           </svg>
 
           {/* Chat Info */}
           <div className="flex-1 min-w-0 pr-6">
-            <div className="text-xs truncate">
-              {chat.title}
-            </div>
+            <div className="text-xs truncate">{chat.title}</div>
             <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">
               {getRelativeTime(chat.updated_at)}
             </div>
@@ -1074,21 +1311,33 @@ function ChatHistoryItem({ chat, isActive, onClick, onDelete }) {
       {/* Delete Button - Shows on hover */}
       <button
         onClick={(e) => {
-          e.stopPropagation()
-          setShowDeleteConfirm(true)
+          e.stopPropagation();
+          setShowDeleteConfirm(true);
         }}
         className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 transition-all"
         title="Delete chat"
       >
-        <svg className="w-3.5 h-3.5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        <svg
+          className="w-3.5 h-3.5 text-red-500"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+          />
         </svg>
       </button>
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
         <div className="absolute top-full left-0 mt-1 w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg shadow-[var(--shadow-lg)] p-2 z-20">
-          <p className="text-xs text-[var(--color-text-secondary)] mb-2">Delete this chat?</p>
+          <p className="text-xs text-[var(--color-text-secondary)] mb-2">
+            Delete this chat?
+          </p>
           <div className="flex gap-1">
             <button
               onClick={handleDelete}
@@ -1098,8 +1347,8 @@ function ChatHistoryItem({ chat, isActive, onClick, onDelete }) {
             </button>
             <button
               onClick={(e) => {
-                e.stopPropagation()
-                setShowDeleteConfirm(false)
+                e.stopPropagation();
+                setShowDeleteConfirm(false);
               }}
               className="flex-1 px-2 py-1 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] text-xs rounded transition-colors"
             >
@@ -1109,42 +1358,42 @@ function ChatHistoryItem({ chat, isActive, onClick, onDelete }) {
         </div>
       )}
     </div>
-  )
+  );
 }
 
 // Kinetic Progress Indicator - Fluid, Data-Driven Animation
 function KineticProgressIndicator({ status, webSources }) {
-  const [progress, setProgress] = useState(0)
+  const [progress, setProgress] = useState(0);
 
   // Simulate smooth progress based on status
   useEffect(() => {
     const progressMap = {
-      'Starting...': 5,
-      'Loading conversation history...': 10,
-      'Understanding your question...': 20,
-      'Loading your documents...': 30,
-      'Analyzing query type...': 40,
-      'Embedding your question...': 50,
-      'Retrieved from cache ⚡': 60,
-      'Searching': 60, // Partial match for "Searching X documents..."
-      'Reranking': 70, // Partial match for "Reranking X chunks..."
-      'Searching the web for recent data... 🌐': 80,
-      'Web search complete': 85,
-      'Running AI agents...': 90,
-      'Generating response...': 95
-    }
+      "Starting...": 5,
+      "Loading conversation history...": 10,
+      "Understanding your question...": 20,
+      "Loading your documents...": 30,
+      "Analyzing query type...": 40,
+      "Embedding your question...": 50,
+      "Retrieved from cache ⚡": 60,
+      Searching: 60, // Partial match for "Searching X documents..."
+      Reranking: 70, // Partial match for "Reranking X chunks..."
+      "Searching the web for recent data... 🌐": 80,
+      "Web search complete": 85,
+      "Running AI agents...": 90,
+      "Generating response...": 95,
+    };
 
     // Find matching progress
-    let newProgress = 5
+    let newProgress = 5;
     for (const [key, value] of Object.entries(progressMap)) {
       if (status.includes(key)) {
-        newProgress = value
-        break
+        newProgress = value;
+        break;
       }
     }
 
-    setProgress(newProgress)
-  }, [status])
+    setProgress(newProgress);
+  }, [status]);
 
   return (
     <div className="relative">
@@ -1159,9 +1408,9 @@ function KineticProgressIndicator({ status, webSources }) {
                 key={i}
                 className="w-2.5 h-2.5 rounded-full bg-[var(--color-accent)]"
                 style={{
-                  animation: 'kineticPulse 1.5s ease-in-out infinite',
+                  animation: "kineticPulse 1.5s ease-in-out infinite",
                   animationDelay: `${i * 0.15}s`,
-                  opacity: 0.4
+                  opacity: 0.4,
                 }}
               />
             ))}
@@ -1170,7 +1419,7 @@ function KineticProgressIndicator({ status, webSources }) {
           {/* Status Text */}
           <div className="flex-1">
             <p className="text-base font-medium text-[var(--color-text-primary)] tracking-tight">
-              {status || 'Processing...'}
+              {status || "Processing..."}
             </p>
           </div>
         </div>
@@ -1181,15 +1430,16 @@ function KineticProgressIndicator({ status, webSources }) {
             className="absolute inset-y-0 left-0 bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-accent)]/80 rounded-full transition-all duration-700 ease-out"
             style={{
               width: `${progress}%`,
-              boxShadow: '0 0 12px rgba(var(--color-accent-rgb), 0.5)'
+              boxShadow: "0 0 12px rgba(var(--color-accent-rgb), 0.5)",
             }}
           >
             {/* Shimmer Effect */}
             <div
               className="absolute inset-0 opacity-30"
               style={{
-                background: 'linear-gradient(90deg, transparent, white, transparent)',
-                animation: 'shimmer 2s infinite'
+                background:
+                  "linear-gradient(90deg, transparent, white, transparent)",
+                animation: "shimmer 2s infinite",
               }}
             />
           </div>
@@ -1206,8 +1456,18 @@ function KineticProgressIndicator({ status, webSources }) {
         {webSources && webSources.length > 0 && (
           <div className="mt-6 pt-6 border-t border-[var(--color-border)]">
             <div className="flex items-center gap-2 mb-4">
-              <svg className="w-4 h-4 text-[var(--color-accent)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+              <svg
+                className="w-4 h-4 text-[var(--color-accent)]"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"
+                />
               </svg>
               <span className="text-sm font-semibold text-[var(--color-text-primary)]">
                 Web sources discovered
@@ -1220,22 +1480,32 @@ function KineticProgressIndicator({ status, webSources }) {
                   key={i}
                   className="bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg p-3 hover:border-[var(--color-accent)] transition-all"
                   style={{
-                    animation: 'slideInUp 0.4s ease-out',
+                    animation: "slideInUp 0.4s ease-out",
                     animationDelay: `${i * 0.1}s`,
-                    animationFillMode: 'both'
+                    animationFillMode: "both",
                   }}
                 >
                   <div className="flex items-start gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium text-[var(--color-text-primary)] truncate mb-1">
-                        {source.title || 'Web Result'}
+                        {source.title || "Web Result"}
                       </div>
                       <div className="text-xs text-[var(--color-text-secondary)] line-clamp-2 leading-relaxed">
                         {source.snippet || source.content}
                       </div>
                     </div>
-                    <svg className="w-4 h-4 text-[var(--color-accent)] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <svg
+                      className="w-4 h-4 text-[var(--color-accent)] flex-shrink-0"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
                     </svg>
                   </div>
                 </div>
@@ -1279,12 +1549,12 @@ function KineticProgressIndicator({ status, webSources }) {
         }
       `}</style>
     </div>
-  )
+  );
 }
 
 // Chat Message Component - ChatGPT Style
 function ChatMessage({ message }) {
-  const isUser = message.role === 'user'
+  const isUser = message.role === "user";
 
   if (isUser) {
     // User message: Compact bubble, right-aligned
@@ -1294,7 +1564,7 @@ function ChatMessage({ message }) {
           <p className="text-[15px] leading-relaxed">{message.content}</p>
         </div>
       </div>
-    )
+    );
   }
 
   // Assistant message: Full-width, ChatGPT style
@@ -1302,8 +1572,18 @@ function ChatMessage({ message }) {
     <div className="flex gap-4 items-start">
       {/* Assistant Avatar */}
       <div className="w-8 h-8 rounded-full bg-[var(--color-accent)]/10 flex items-center justify-center flex-shrink-0 mt-1">
-        <svg className="w-4 h-4 text-[var(--color-accent)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+        <svg
+          className="w-4 h-4 text-[var(--color-accent)]"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+          />
         </svg>
       </div>
 
@@ -1319,7 +1599,8 @@ function ChatMessage({ message }) {
 
         {/* Markdown Content */}
         {message.content && (
-          <div className="prose prose-sm max-w-none
+          <div
+            className="prose prose-sm max-w-none
           prose-headings:font-semibold prose-headings:text-[var(--color-text-primary)] prose-headings:mb-3 prose-headings:mt-4 first:prose-headings:mt-0
           prose-p:text-[var(--color-text-primary)] prose-p:leading-relaxed prose-p:my-3 first:prose-p:mt-0 last:prose-p:mb-0
           prose-strong:text-[var(--color-text-primary)] prose-strong:font-semibold
@@ -1333,32 +1614,34 @@ function ChatMessage({ message }) {
           prose-td:border prose-td:border-[var(--color-border)] prose-td:px-3 prose-td:py-2 prose-td:text-[var(--color-text-primary)]
           prose-a:text-[var(--color-accent)] prose-a:no-underline hover:prose-a:underline
           prose-blockquote:border-l-4 prose-blockquote:border-[var(--color-accent)] prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-[var(--color-text-secondary)]
-        ">
-          <ReactMarkdown
-            components={{
-              code({ node, inline, className, children, ...props }) {
-                const match = /language-(\w+)/.exec(className || '')
-                const language = match ? match[1] : ''
-
-                if (!inline && language) {
-                  return (
-                    <CodeBlock
-                      language={language}
-                      code={String(children).replace(/\n$/, '')}
-                    />
-                  )
-                }
-
-                return (
-                  <code className={className} {...props}>
-                    {children}
-                  </code>
-                )
-              }
-            }}
+        "
           >
-            {message.content}
-          </ReactMarkdown>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                code({ node, inline, className, children, ...props }) {
+                  const match = /language-(\w+)/.exec(className || "");
+                  const language = match ? match[1] : "";
+
+                  if (!inline && language) {
+                    return (
+                      <CodeBlock
+                        language={language}
+                        code={String(children).replace(/\n$/, "")}
+                      />
+                    );
+                  }
+
+                  return (
+                    <code className={className} {...props}>
+                      {children}
+                    </code>
+                  );
+                },
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
           </div>
         )}
 
@@ -1372,18 +1655,18 @@ function ChatMessage({ message }) {
         )}
       </div>
     </div>
-  )
+  );
 }
 
 // Code Block Component with Copy Button
 function CodeBlock({ language, code }) {
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(code)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
+    navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
     <div className="relative group my-4">
@@ -1396,7 +1679,7 @@ function CodeBlock({ language, code }) {
           onClick={handleCopy}
           className="text-xs px-2 py-1 rounded bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-primary)] border border-[var(--color-border)] transition-colors"
         >
-          {copied ? '✓ Copied' : 'Copy'}
+          {copied ? "✓ Copied" : "Copy"}
         </button>
       </div>
 
@@ -1408,24 +1691,24 @@ function CodeBlock({ language, code }) {
           margin: 0,
           borderTopLeftRadius: 0,
           borderTopRightRadius: 0,
-          borderBottomLeftRadius: '0.5rem',
-          borderBottomRightRadius: '0.5rem',
-          fontSize: '13px',
-          lineHeight: '1.6'
+          borderBottomLeftRadius: "0.5rem",
+          borderBottomRightRadius: "0.5rem",
+          fontSize: "13px",
+          lineHeight: "1.6",
         }}
         showLineNumbers
       >
         {code}
       </SyntaxHighlighter>
     </div>
-  )
+  );
 }
 
 // Source Citations Component
 function SourceCitations({ sources }) {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(false);
 
-  if (!sources || sources.length === 0) return null
+  if (!sources || sources.length === 0) return null;
 
   return (
     <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
@@ -1434,20 +1717,37 @@ function SourceCitations({ sources }) {
         className="w-full flex items-center justify-between px-4 py-3 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
       >
         <div className="flex items-center gap-2">
-          <svg className="w-4 h-4 text-[var(--color-accent)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          <svg
+            className="w-4 h-4 text-[var(--color-accent)]"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+            />
           </svg>
           <span className="text-sm font-medium text-[var(--color-text-primary)]">
-            {sources.length} document source{sources.length !== 1 ? 's' : ''}
+            {sources.length} document source{sources.length !== 1 ? "s" : ""}
           </span>
         </div>
         <svg
-          className={`w-4 h-4 text-[var(--color-text-tertiary)] transition-transform ${expanded ? 'rotate-180' : ''}`}
+          className={`w-4 h-4 text-[var(--color-text-tertiary)] transition-transform ${
+            expanded ? "rotate-180" : ""
+          }`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
         >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M19 9l-7 7-7-7"
+          />
         </svg>
       </button>
 
@@ -1456,7 +1756,8 @@ function SourceCitations({ sources }) {
           {sources.slice(0, 5).map((source, i) => (
             <div key={i} className="px-4 py-3 bg-[var(--color-bg-primary)]">
               <div className="text-xs text-[var(--color-text-secondary)] mb-1">
-                {source.document_name || 'Document'} • Page {source.page_number || 'N/A'}
+                {source.document_name || "Document"} • Page{" "}
+                {source.page_number || "N/A"}
               </div>
               <div className="text-sm text-[var(--color-text-primary)] leading-relaxed line-clamp-3">
                 {source.content || source.text}
@@ -1466,20 +1767,32 @@ function SourceCitations({ sources }) {
         </div>
       )}
     </div>
-  )
+  );
 }
 
 // Web Source Cards Component
 function WebSourceCards({ sources }) {
-  if (!sources || sources.length === 0) return null
+  if (!sources || sources.length === 0) return null;
 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <svg className="w-4 h-4 text-[var(--color-accent)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+        <svg
+          className="w-4 h-4 text-[var(--color-accent)]"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"
+          />
         </svg>
-        <span className="text-sm font-medium text-[var(--color-text-primary)]">Web sources</span>
+        <span className="text-sm font-medium text-[var(--color-text-primary)]">
+          Web sources
+        </span>
       </div>
 
       <div className="grid gap-2">
@@ -1494,7 +1807,7 @@ function WebSourceCards({ sources }) {
             <div className="flex items-start gap-3">
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-[var(--color-text-primary)] group-hover:text-[var(--color-accent)] transition-colors mb-1 truncate">
-                  {source.title || 'Web Result'}
+                  {source.title || "Web Result"}
                 </div>
                 <div className="text-xs text-[var(--color-text-secondary)] line-clamp-2 leading-relaxed">
                   {source.snippet || source.content}
@@ -1505,13 +1818,23 @@ function WebSourceCards({ sources }) {
                   </div>
                 )}
               </div>
-              <svg className="w-4 h-4 text-[var(--color-text-tertiary)] group-hover:text-[var(--color-accent)] transition-colors flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              <svg
+                className="w-4 h-4 text-[var(--color-text-tertiary)] group-hover:text-[var(--color-accent)] transition-colors flex-shrink-0 mt-0.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                />
               </svg>
             </div>
           </a>
         ))}
       </div>
     </div>
-  )
+  );
 }

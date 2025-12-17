@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.core.auth import get_current_user
 from app.services.supabase_client import supabase
 from app.services.document_processor import process_document
-from app.services.vector_search import embed_question, search_similar_chunks
+from app.services.hybrid_search import hybrid_search
 from app.services.reranker import rerank_chunks
 from app.services.query_preprocessor import preprocess_query
 from app.services.redis_cache import cache_service
@@ -170,31 +170,21 @@ async def chat_query(
             else:
                 print(f"❌ [CACHE MISS] No cached results found")
 
-                # Status update: Embedding
-                yield f"data: {json.dumps({'type': 'status', 'content': 'Embedding your question...'})}\n\n"
-                print(f"🔢 [EMBEDDING] Generating embeddings for query...")
-                print(f"🔄 [ASYNC] Running embed_question in thread pool...")
-                question_embedding = await asyncio.to_thread(embed_question, normalized_query)
-                print(f"✅ [EMBEDDING] Generated {len(question_embedding)} dimensional embedding")
-
-                # Get document names for better status message
                 doc_names = [doc.get("file_name", "Unknown") for doc in docs_response.data]
-                doc_names_str = ", ".join(doc_names[:2])  # Show first 2 documents
+                doc_names_str = ", ".join(doc_names[:2])
                 if len(doc_names) > 2:
                     doc_names_str += f" and {len(doc_names) - 2} more"
 
-                # Status update: Vector search with document names
                 yield f"data: {json.dumps({'type': 'status', 'content': f'Searching {doc_names_str}...'})}\n\n"
-                print(f"🔍 [VECTOR SEARCH] Searching across {len(actual_doc_ids)} documents: {doc_names}")
-                print(f"🔄 [ASYNC] Running search_similar_chunks in thread pool...")
+                print(f"🔍 [HYBRID SEARCH] Searching across {len(actual_doc_ids)} documents")
                 chunks = await asyncio.to_thread(
-                    search_similar_chunks,
-                    supabase=supabase,
-                    question_embedding=question_embedding,
-                    document_id=actual_doc_ids,
-                    top_k=20
+                    hybrid_search,
+                    query=normalized_query,
+                    document_ids=actual_doc_ids,
+                    top_k=20,
+                    vector_weight=0.5
                 )
-                print(f"✅ [VECTOR SEARCH] Found {len(chunks)} relevant chunks")
+                print(f"✅ [HYBRID SEARCH] Found {len(chunks)} relevant chunks")
 
                 # Status update: Reranking
                 yield f"data: {json.dumps({'type': 'status', 'content': f'Reranking {len(chunks)} chunks for relevance...'})}\n\n"
@@ -241,37 +231,36 @@ async def chat_query(
                 "verification_output": "",
                 "risk_output": "",
                 "final_answer": "",
-                "next_agent": ""
+                "next_agent": "",
+                "reflection_passed": False
             }
 
-            # Agent name mapping for better status messages
             agent_display_names = {
                 "research": "Research agent analyzing documents",
                 "verification": "Verification agent checking facts",
                 "risk": "Risk analysis agent evaluating concerns",
-                "synthesis": "Synthesis agent generating final answer"
+                "synthesis": "Synthesis agent generating final answer",
+                "reflection": "Quality check complete"
             }
 
-            # Stream agent graph execution (CRITICAL: This replaces invoke())
             print(f"🔄 [STREAMING] Starting agent_graph.stream() with mode='updates'")
             full_answer = ""
 
             for event in agent_graph.stream(initial_state, stream_mode="updates"):
-                # event = {node_name: state_update}
                 print(f"📨 [STREAM EVENT] Received: {list(event.keys())}")
 
                 for node_name, state_update in event.items():
                     print(f"🎯 [NODE COMPLETE] '{node_name}' finished")
 
-                    # Send agent-specific status update
                     agent_status = agent_display_names.get(node_name, f"{node_name} agent working")
                     yield f"data: {json.dumps({'type': 'status', 'content': agent_status + ' ✓'})}\n\n"
                     print(f"✅ [SSE SENT] Status: {agent_status}")
 
-                    # If synthesis agent completed, get final answer
-                    if node_name == "synthesis" and "final_answer" in state_update:
+                    if node_name == "reflection" and "final_answer" in state_update:
                         full_answer = state_update["final_answer"]
-                        print(f"🎉 [SYNTHESIS COMPLETE] Final answer length: {len(full_answer)} characters")
+                        print(f"🎉 [REFLECTION COMPLETE] Final answer length: {len(full_answer)} characters")
+                    elif node_name == "synthesis" and "final_answer" in state_update and not full_answer:
+                        full_answer = state_update["final_answer"]
 
             print(f"✅ [AGENT GRAPH] All agents completed. Total answer length: {len(full_answer)} characters")
 

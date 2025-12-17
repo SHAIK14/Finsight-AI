@@ -15,18 +15,24 @@ llm = ChatOpenAI(
 
 @tool
 def vector_search_tool(chunks:List[Dict]) -> str:
-    """Format vector search results for agent to read."""
+    """Format search results with contextual headers."""
     if not chunks:
         return "No document chunks found"
     formatted_chunks = []
-    for i,chunk in enumerate(chunks):
+    for i, chunk in enumerate(chunks):
+        doc_name = chunk.get("document_name", "Document")
+        section = chunk.get("section_title", "")
+        page = chunk.get("page_number", "N/A")
+        
+        section_info = f" | {section}" if section else ""
+        
         chunk_text = (
-            f"[Chunk {i+1}] (Page {chunk['page_number']}, Similarity: {chunk['similarity']:.2f})\n"
+            f"[{doc_name}{section_info} | Page {page}]\n"
             f"{chunk['content']}\n"
         )
         formatted_chunks.append(chunk_text)
     
-    return "\n".join(formatted_chunks)
+    return "\n---\n".join(formatted_chunks)
 
 @tool
 def web_search_tool(web_results:List[Dict]) -> str:
@@ -62,34 +68,30 @@ def research_agent(state:AgentState) -> AgentState:
 
     # Now create prompt with the actual data
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a research agent extracting comprehensive financial data from documents.
+        ("system", """You are a research agent extracting financial data from documents and web sources.
 
-CRITICAL EXTRACTION RULES:
-1. ONLY use information from the Document Chunks and Web Results provided below
-2. DO NOT make up ANY company names, numbers, or data
-3. Extract ALL relevant numbers, percentages, and metrics you find
-4. Include complete context for each number:
-   - Company name
-   - Time period (quarter, year, specific date)
-   - Metric type (revenue, profit, expenses, etc.)
-   - Comparisons (YoY, QoQ if mentioned)
-5. Always cite exact page numbers from the chunks
-6. Use the EXACT company names, dates, and numbers from the documents
+CRITICAL RULES:
+1. ONLY use information from Document Chunks and Web Results provided
+2. DO NOT make up ANY data
+3. Extract ALL relevant numbers with full context
 
-OUTPUT FORMAT:
-- For financial metrics: Include ALL available data points, not just one or two
-- For each metric, cite the page number
-- If comparing multiple entities/periods, structure data clearly
-- If information is not in chunks/results, say "Information not found in uploaded documents"
+FOR DOCUMENT DATA:
+- Cite as: (Page X)
+- Include company name, time period, metric type
 
-Example good output:
-"Hindustan Copper Limited Q2 FY 2025 (ended Sept 30, 2025):
-- Revenue from Operations: ₹718.04 crore (Page 4)
-- Total Income: ₹728.95 crore (Page 4)
-- Profit Before Tax: ₹248.63 crore (Page 4)
-- Profit After Tax: ₹186.02 crore (Page 11)"
+FOR WEB DATA (stock prices, news):
+- Cite with ACTUAL website name and URL: (Source: [Moneycontrol](https://moneycontrol.com/...))
+- If multiple sources show different prices, pick the MOST RECENT or from NSE/BSE/Moneycontrol
+- Do NOT list 5 different conflicting prices - pick ONE reliable source
+- Include the date if available
 
-Your output will be used by synthesis agent to create the final report."""),
+Example for stock price:
+"Hitachi Energy India stock price: ₹19,320 (Source: [Moneycontrol](https://www.moneycontrol.com/...))"
+
+Example for document metrics:
+"Revenue: ₹718.04 crore (Page 4)"
+
+If information not found, say "Information not found in uploaded documents or web search"."""),
         ("user", """Question: {question}
 
 Document Chunks:
@@ -98,7 +100,7 @@ Document Chunks:
 Web Results:
 {web_text}
 
-Extract ONLY the relevant information from above to answer the question. Use exact company names and page numbers.""")
+Extract relevant information with proper citations:""")
     ])
 
     chain = prompt | llm
