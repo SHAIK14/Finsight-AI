@@ -27,8 +27,8 @@ class Settings(BaseSettings):
     upstash_redis_url: str
     upstash_redis_token: str
 
-    # Unstructured.io
-    unstructured_api_key: str
+    # Unstructured.io (optional - not currently used)
+    unstructured_api_key: str = ""
 
     # Tavily (optional - for Pro users)
     tavily_api_key: str = ""
