@@ -1342,16 +1342,18 @@ function ChatHistoryItem({ chat, isActive, onClick, onDelete }) {
     <div className="group relative">
       <button
         onClick={onClick}
-        className={`w-full text-left px-2 py-2.5 rounded-md transition-colors ${
+        className={`w-full text-left px-3 py-3 rounded-lg transition-all duration-200 ${
           isActive
-            ? "bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]"
-            : "hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]"
+            ? "bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] shadow-sm"
+            : "hover:bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
         }`}
       >
-        <div className="flex items-start gap-2">
+        <div className="flex items-start gap-2.5">
           {/* Chat Icon */}
           <svg
-            className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
+            className={`w-4 h-4 flex-shrink-0 mt-0.5 transition-colors ${
+              isActive ? "text-[var(--color-accent)]" : ""
+            }`}
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -1366,8 +1368,10 @@ function ChatHistoryItem({ chat, isActive, onClick, onDelete }) {
 
           {/* Chat Info */}
           <div className="flex-1 min-w-0 pr-6">
-            <div className="text-xs truncate">{chat.title}</div>
-            <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">
+            <div className="text-sm font-medium truncate leading-tight">
+              {chat.title}
+            </div>
+            <div className="text-xs text-[var(--color-text-tertiary)] mt-1">
               {getRelativeTime(chat.updated_at)}
             </div>
           </div>
@@ -1565,7 +1569,7 @@ function ChatMessage({ message, onRegenerate, isLast }) {
   if (isUser) {
     return (
       <div className="flex justify-end animate-fade-in">
-        <div className="max-w-[75%] bg-[var(--color-accent)] text-white rounded-2xl rounded-br-md px-4 py-3 shadow-sm">
+        <div className="max-w-[75%] bg-[var(--color-accent)] text-white rounded-2xl rounded-br-md px-4 py-3 shadow-sm hover:shadow-md transition-shadow duration-200">
           <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
             {message.content}
           </p>
@@ -1575,8 +1579,8 @@ function ChatMessage({ message, onRegenerate, isLast }) {
   }
 
   return (
-    <div className="flex gap-3 items-start group animate-fade-in">
-      <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[var(--color-accent)] to-[var(--color-accent)]/70 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-sm">
+    <div className="flex gap-3 items-start group animate-fade-in -mx-3 px-3 py-2 rounded-xl hover:bg-[var(--color-bg-secondary)]/50 transition-colors duration-200">
+      <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[var(--color-accent)] to-[var(--color-accent)]/70 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-sm group-hover:shadow-md transition-shadow duration-200">
         <svg
           className="w-4 h-4 text-white"
           fill="none"
@@ -1921,8 +1925,17 @@ function SourceCitations({ sources }) {
 function WebSourceCards({ sources }) {
   if (!sources || sources.length === 0) return null;
 
+  const getFaviconUrl = (url) => {
+    try {
+      const domain = new URL(url).hostname;
+      return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+    } catch {
+      return null;
+    }
+  };
+
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <div className="flex items-center gap-2">
         <svg
           className="w-4 h-4 text-[var(--color-accent)]"
@@ -1943,30 +1956,59 @@ function WebSourceCards({ sources }) {
       </div>
 
       <div className="grid gap-2">
-        {sources.slice(0, 3).map((source, i) => (
-          <a
-            key={i}
-            href={source.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block border border-[var(--color-border)] rounded-lg p-3 hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-secondary)] transition-all group"
-          >
-            <div className="flex items-start gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-[var(--color-text-primary)] group-hover:text-[var(--color-accent)] transition-colors mb-1 truncate">
-                  {source.title || "Web Result"}
-                </div>
-                <div className="text-xs text-[var(--color-text-secondary)] line-clamp-2 leading-relaxed">
-                  {source.snippet || source.content}
-                </div>
-                {source.url && (
-                  <div className="text-xs text-[var(--color-text-tertiary)] mt-1 truncate">
-                    {new URL(source.url).hostname}
-                  </div>
+        {sources.slice(0, 3).map((source, i) => {
+          const faviconUrl = getFaviconUrl(source.url);
+          const hostname = source.url
+            ? new URL(source.url).hostname.replace("www.", "")
+            : "";
+
+          return (
+            <a
+              key={i}
+              href={source.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-start gap-3 border border-[var(--color-border)] rounded-lg p-3 hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-secondary)] hover:shadow-sm transition-all group"
+            >
+              {/* Favicon */}
+              <div className="w-8 h-8 rounded-md bg-[var(--color-bg-tertiary)] flex items-center justify-center flex-shrink-0 overflow-hidden">
+                {faviconUrl ? (
+                  <img
+                    src={faviconUrl}
+                    alt=""
+                    className="w-5 h-5"
+                    onError={(e) => (e.target.style.display = "none")}
+                  />
+                ) : (
+                  <svg
+                    className="w-4 h-4 text-[var(--color-text-tertiary)]"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"
+                    />
+                  </svg>
                 )}
               </div>
+
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-[var(--color-text-primary)] group-hover:text-[var(--color-accent)] transition-colors truncate">
+                  {source.title || "Web Result"}
+                </div>
+                <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">
+                  {hostname}
+                </div>
+              </div>
+
+              {/* Arrow */}
               <svg
-                className="w-4 h-4 text-[var(--color-text-tertiary)] group-hover:text-[var(--color-accent)] transition-colors flex-shrink-0 mt-0.5"
+                className="w-4 h-4 text-[var(--color-text-tertiary)] group-hover:text-[var(--color-accent)] transition-colors flex-shrink-0"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -1978,9 +2020,9 @@ function WebSourceCards({ sources }) {
                   d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
                 />
               </svg>
-            </div>
-          </a>
-        ))}
+            </a>
+          );
+        })}
       </div>
     </div>
   );

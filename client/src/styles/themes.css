@@ -1,9 +1,9 @@
 /* Base spacing and typography - shared across all themes */
 :root {
   /* Typography - Financial Editorial */
-  --font-serif: 'Crimson Pro', Georgia, serif;
-  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
-  --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
+  --font-serif: "Crimson Pro", Georgia, serif;
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "Courier New", monospace;
 
   /* Spacing scale */
   --space-1: 0.25rem;
@@ -37,11 +37,11 @@
   --color-border: #e7e5e4;
   --color-border-hover: #d6d3d1;
 
-  --color-accent: #0f172a;  /* Deep navy */
+  --color-accent: #0f172a; /* Deep navy */
   --color-accent-rgb: 15, 23, 42;
   --color-accent-hover: #1e293b;
 
-  --color-highlight: #d97706;  /* Amber accent */
+  --color-highlight: #d97706; /* Amber accent */
   --color-highlight-hover: #b45309;
 
   --color-success: #059669;
@@ -74,7 +74,7 @@
   --color-border: #2a2a2a;
   --color-border-hover: #3a3a3a;
 
-  --color-accent: #f59e0b;  /* Darker amber for better contrast with white text */
+  --color-accent: #f59e0b; /* Darker amber for better contrast with white text */
   --color-accent-rgb: 245, 158, 11;
   --color-accent-hover: #d97706;
 
@@ -101,54 +101,53 @@
 /* Solarized Light - Claude Inspired */
 [data-theme="solarized-light"] {
   /* Base colors - warm cream background */
-  --color-bg-primary: #fdf6e3;    /* base3 - background */
-  --color-bg-secondary: #eee8d5;  /* base2 - background highlights */
-  --color-bg-tertiary: #e7e0cc;   /* slightly darker for better contrast */
+  --color-bg-primary: #fdf6e3; /* base3 - background */
+  --color-bg-secondary: #f5eed6; /* slightly darker for better contrast */
+  --color-bg-tertiary: #e8e1c8; /* even darker for active states */
 
-  /* Text colors - muted, easy on eyes */
-  --color-text-primary: #586e75;  /* base01 - primary content (darker than original) */
-  --color-text-secondary: #839496; /* base0 - secondary */
-  --color-text-tertiary: #93a1a1;  /* base1 - tertiary */
+  /* Text colors - improved contrast */
+  --color-text-primary: #3d4f51; /* darker for better readability */
+  --color-text-secondary: #657b83; /* base00 - secondary */
+  --color-text-tertiary: #839496; /* base0 - tertiary */
 
-  /* Borders - subtle */
-  --color-border: #d9d2c1;         /* lighter, barely visible */
-  --color-border-hover: #93a1a1;   /* base1 on hover */
+  /* Borders - more visible */
+  --color-border: #d4cab3; /* more visible border */
+  --color-border-hover: #b8ad94; /* darker on hover */
 
-  /* Primary accent - Orange warmth (like Claude) */
-  --color-accent: #cb4b16;         /* orange - warm and distinctive */
-  --color-accent-rgb: 203, 75, 22;
-  --color-accent-hover: #dc322f;   /* red on hover */
+  /* Primary accent - Refined orange */
+  --color-accent: #b45309; /* darker orange for better contrast */
+  --color-accent-rgb: 180, 83, 9;
+  --color-accent-hover: #92400e; /* even darker on hover */
 
-  /* Highlight - Cyan complement */
-  --color-highlight: #2aa198;      /* cyan */
-  --color-highlight-hover: #268bd2; /* blue on hover */
+  /* Highlight - Teal complement */
+  --color-highlight: #0d9488; /* teal - better contrast */
+  --color-highlight-hover: #0f766e; /* darker teal on hover */
 
   /* Status colors */
-  --color-success: #859900;        /* green */
-  --color-success-light: #eee8d5;
+  --color-success: #65a30d; /* lime green - better visibility */
+  --color-success-light: #ecfccb;
 
-  --color-warning: #cb4b16;        /* orange */
-  --color-warning-light: #eee8d5;
+  --color-warning: #d97706; /* amber */
+  --color-warning-light: #fef3c7;
 
-  --color-error: #dc322f;          /* red */
-  --color-error-light: #eee8d5;
+  --color-error: #dc2626; /* red */
+  --color-error-light: #fee2e2;
 
   /* Additional Solarized accents */
-  --solarized-yellow: #b58900;
-  --solarized-orange: #cb4b16;
-  --solarized-red: #dc322f;
-  --solarized-magenta: #d33682;
-  --solarized-violet: #6c71c4;
-  --solarized-blue: #268bd2;
-  --solarized-cyan: #2aa198;
-  --solarized-green: #859900;
+  --solarized-yellow: #ca8a04;
+  --solarized-orange: #c2410c;
+  --solarized-red: #dc2626;
+  --solarized-magenta: #be185d;
+  --solarized-violet: #7c3aed;
+  --solarized-blue: #2563eb;
+  --solarized-cyan: #0891b2;
+  --solarized-green: #65a30d;
 
-  /* Softer shadows */
-  --shadow-sm: 0 1px 2px 0 rgba(101, 123, 131, 0.08);
-  --shadow-md: 0 4px 6px -1px rgba(101, 123, 131, 0.12);
-  --shadow-lg: 0 10px 15px -3px rgba(101, 123, 131, 0.15);
+  /* Warmer shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(120, 100, 60, 0.1);
+  --shadow-md: 0 4px 6px -1px rgba(120, 100, 60, 0.15);
+  --shadow-lg: 0 10px 15px -3px rgba(120, 100, 60, 0.2);
 }
-
 
 /* Apply theme colors to body */
 body {
@@ -160,6 +159,5 @@ body {
 /* Smooth theme transitions */
 * {
   transition: background-color var(--transition-base),
-              border-color var(--transition-base),
-              color var(--transition-base);
+    border-color var(--transition-base), color var(--transition-base);
 }
