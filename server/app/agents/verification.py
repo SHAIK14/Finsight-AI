@@ -1,5 +1,4 @@
 from typing import List, Dict
-from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from app.agents.state import AgentState
@@ -13,64 +12,58 @@ llm = ChatOpenAI(
     temperature=0
 )
 
-@tool
-def cross_reference_tool(chunks: List[Dict], research_findings: str) -> str:
-    """Cross-reference research findings against source chunks."""
+def format_chunks_for_verification(chunks: List[Dict]) -> str:
     if not chunks:
-        return "No chunks to cross-reference"
+        return "No source chunks available"
     
-    formatted_chunks = []
-    for i, chunk in enumerate(chunks):
-        chunk_text = (
-            f"[Chunk {i+1}] (Page {chunk['page_number']})\n"
-            f"{chunk['content']}\n"
-        )
-        formatted_chunks.append(chunk_text)
+    formatted = []
+    for i, chunk in enumerate(chunks[:8]):
+        page = chunk.get('page_number', 'N/A')
+        content = chunk.get('content', '')[:500]
+        formatted.append(f"[Page {page}]\n{content}")
     
-    return f"Research Claims:\n{research_findings}\n\nSource Chunks:\n" + "\n".join(formatted_chunks)
+    return "\n---\n".join(formatted)
 
 def verification_agent(state: AgentState) -> AgentState:
     research_output = state.get("research_output", "")
+    chunks = state.get("chunks", [])
     
     if not research_output:
         state["verification_output"] = "No research findings to verify"
         state["next_agent"] = "synthesis"
         return state
     
-    tools = [cross_reference_tool]
-    llm_with_tools = llm.bind_tools(tools)
+    chunks_text = format_chunks_for_verification(chunks)
     
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a verification agent that checks research findings for accuracy.
+        ("system", """You are a verification agent. Cross-reference research claims against source documents.
 
-Your job: Cross-reference research claims against source chunks.
-
-Available tools:
-1. cross_reference_tool: Compare research findings to actual source chunks
-
-Verify:
-- Are page numbers correct?
-- Are quotes/numbers accurate?
-- Are claims supported by sources?
-- Any contradictions?
+For each claim in the research output:
+1. Check if the source chunk actually contains the stated information
+2. Verify numbers, dates, and page references are accurate
+3. Flag any claims not supported by sources
 
 Output format:
-- ✅ Verified claims
-- ⚠️ Uncertain claims (need more info)
-- ❌ Incorrect claims (with corrections)
+✅ [Claim] - Verified (Page X confirms this)
+⚠️ [Claim] - Cannot verify (not found in sources)
+❌ [Claim] - Incorrect (Source says X, not Y)
 
-Be strict but fair."""),
-        ("user", """Research findings to verify:
+Be concise. Only list claims that need attention."""),
+        ("user", """Research findings:
 {research_output}
 
-Verify these claims:""")
+Source documents:
+{chunks_text}
+
+Verify:""")
     ])
     
-    chain = prompt | llm_with_tools
+    chain = prompt | llm
     
     try:
         response = chain.invoke({
-            "research_output": research_output
+            "research_output": research_output,
+            "chunks_text": chunks_text
         })
         verification_findings = response.content
     except Exception as e:

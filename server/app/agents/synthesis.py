@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Generator
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from app.agents.state import AgentState
@@ -12,10 +12,21 @@ llm = ChatOpenAI(
     temperature=0
 )
 
+llm_streaming = ChatOpenAI(
+    model="gpt-4o-mini",
+    openai_api_key=settings.openai_api_key,
+    temperature=0,
+    streaming=True
+)
+
 def synthesis_agent(state:AgentState) -> AgentState:
     research_output = state.get("research_output","")   
     verification_output = state.get("verification_output","")
     risk_output = state.get("risk_output","")
+    route_info = state.get("route_info", {})
+    complexity = route_info.get("complexity", "simple")
+    response_style = "concise" if complexity == "simple" else "comprehensive"
+    
     context_parts = []
     if research_output:
         context_parts.append(f"### Research Findings:\n{research_output}")
@@ -27,62 +38,43 @@ def synthesis_agent(state:AgentState) -> AgentState:
     combined_context = "\n\n".join(context_parts)
     
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are an expert financial analyst creating comprehensive, well-structured reports.
+        ("system", """You are an expert financial analyst. Response style depends on complexity.
 
-Your job: Synthesize agent outputs into professional financial analysis.
+RESPONSE STYLE: {response_style}
 
-You receive:
-- Research findings (facts from documents/web)
-- Verification results (cross-checks, if run)
-- Risk analysis (risk assessment, if run)
+**CONCISE (simple queries):**
+- 2-4 sentences max, lead with the answer
+- Example: "Revenue was **₹718.04 crore** for Q2 FY25, up 23.3% YoY. (Page 7)"
 
-OUTPUT REQUIREMENTS:
+**COMPREHENSIVE (complex queries):**
+- Use ### sections for organization
+- Use markdown tables for comparisons
+- End with "### Key Takeaways" (2-3 bullets)
 
-1. **Structure & Formatting:**
-   - Start with a clear title using ## or ###
-   - Use markdown tables for numerical/comparative data
-   - Use bullet points for lists
-   - Use **bold** for key numbers and metrics
-   - Use proper spacing and sections
+**TABLE FORMAT (CRITICAL):**
+| Metric | Value | Source |
+|--------|-------|--------|
+| Revenue | ₹718 Cr | Page 4 |
 
-2. **When to Use Tables:**
-   - Financial metrics (revenue, profit, expenses)
-   - Quarterly/yearly comparisons
-   - Multiple data points for same entity
-   - Any data with 3+ rows/columns
+- NEVER use <br> or HTML tags - use separate rows instead
+- Keep cells short - one value per cell
+- If comparing multiple items, use separate columns
 
-   Example table format:
-   | Metric | Value | Change |
-   |--------|-------|--------|
-   | Revenue | ₹718.04 Cr | +15.2% YoY |
-   | Profit | ₹186.02 Cr | +22.5% YoY |
+**CITATIONS:**
+- Documents: (Page X)
+- Web: [SiteName](url) - use actual site name from URL
+- NEVER write "Source 1" or "Source 2"
 
-3. **Content Quality:**
-   - Extract ALL relevant numbers from agent outputs
-   - Include specific dates, quarters, fiscal years
-   - Always cite sources (Page X from docs, URL for web)
-   - Add context: YoY changes, comparisons, trends
-   - Include key highlights section for important findings
-
-4. **Comprehensive Coverage:**
-   - Don't summarize too much - include detailed figures
-   - If agents found 10 metrics, show all 10 (in table format)
-   - Add "Key Takeaways" or "Summary" section at the end
-   - Include forward-looking insights when available
-
-5. **Citation Format:**
-   - Documents: (Page X) or (Pages 4, 8, 11)
-   - Web: Include actual website name and URL like (Source: [Moneycontrol](url))
-   - NEVER use "Source 1", "Source 2" - always use real website names
-   - For stock prices: cite ONE reliable source (NSE, BSE, Moneycontrol preferred)
-
-Don't just repeat what agents said - synthesize, structure, and enhance it into a professional financial report."""),
+**DATA INTEGRITY:**
+- ONLY use data from Agent Outputs below
+- If data not found, say "Not available in documents"
+- Never fabricate numbers"""),
         ("user", """Question: {question}
 
 Agent Outputs:
 {context}
 
-Create final answer:""")
+{response_style} answer:""")
     ])
     
     chain = prompt | llm
@@ -90,7 +82,9 @@ Create final answer:""")
     try:
         response = chain.invoke({
             "question": state["question"],
-            "context": combined_context
+            "context": combined_context,
+            "complexity": complexity,
+            "response_style": response_style
         })
         final_answer = response.content
     except Exception as e:
@@ -101,4 +95,82 @@ Create final answer:""")
     
     return state
 
+
+def stream_synthesis(state: AgentState) -> Generator[str, None, str]:
+    """Stream synthesis tokens. Yields each token, returns full answer at end."""
+    research_output = state.get("research_output", "")
+    verification_output = state.get("verification_output", "")
+    risk_output = state.get("risk_output", "")
+    route_info = state.get("route_info", {})
+    complexity = route_info.get("complexity", "simple")
+    response_style = "concise" if complexity == "simple" else "comprehensive"
     
+    context_parts = []
+    if research_output:
+        context_parts.append(f"### Research Findings:\n{research_output}")
+    if verification_output:
+        context_parts.append(f"### Verification Results:\n{verification_output}")
+    if risk_output:
+        context_parts.append(f"### Risk Analysis:\n{risk_output}")
+    
+    combined_context = "\n\n".join(context_parts)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are an expert financial analyst. Response style depends on complexity.
+
+RESPONSE STYLE: {response_style}
+
+**CONCISE (simple queries):**
+- 2-4 sentences max, lead with the answer
+- Example: "Revenue was **₹718.04 crore** for Q2 FY25, up 23.3% YoY. (Page 7)"
+
+**COMPREHENSIVE (complex queries):**
+- Use ### sections for organization
+- Use markdown tables for comparisons
+- End with "### Key Takeaways" (2-3 bullets)
+
+**TABLE FORMAT (CRITICAL):**
+| Metric | Value | Source |
+|--------|-------|--------|
+| Revenue | ₹718 Cr | Page 4 |
+
+- NEVER use <br> or HTML tags - use separate rows instead
+- Keep cells short - one value per cell
+- If comparing multiple items, use separate columns
+
+**CITATIONS:**
+- Documents: (Page X)
+- Web: [SiteName](url) - use actual site name from URL
+- NEVER write "Source 1" or "Source 2"
+
+**DATA INTEGRITY:**
+- ONLY use data from Agent Outputs below
+- If data not found, say "Not available in documents"
+- Never fabricate numbers"""),
+        ("user", """Question: {question}
+
+Agent Outputs:
+{context}
+
+{response_style} answer:""")
+    ])
+    
+    messages = prompt.format_messages(
+        question=state["question"],
+        context=combined_context,
+        response_style=response_style
+    )
+    
+    full_answer = ""
+    try:
+        for chunk in llm_streaming.stream(messages):
+            token = chunk.content
+            if token:
+                full_answer += token
+                yield token
+    except Exception as e:
+        error_msg = f"Synthesis failed: {str(e)}"
+        yield error_msg
+        full_answer = error_msg
+    
+    return full_answer

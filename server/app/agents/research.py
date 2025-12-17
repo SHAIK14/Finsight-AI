@@ -41,9 +41,16 @@ def web_search_tool(web_results:List[Dict]) -> str:
         return "No web search results found"
 
     formatted_results = []
-    for i, result in enumerate(web_results):
+    for result in web_results:
+        try:
+            from urllib.parse import urlparse
+            domain = urlparse(result['url']).netloc.replace('www.', '')
+            site_name = domain.split('.')[0].capitalize()
+        except:
+            site_name = "Web"
+        
         result_text = (
-            f"[Source {i+1}] {result['title']}\n"
+            f"[{site_name}] {result['title']}\n"
             f"URL: {result['url']}\n"
             f"Content: {result['content']}\n"
         )

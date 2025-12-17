@@ -16,6 +16,7 @@ def reflection_agent(state: AgentState) -> AgentState:
     final_answer = state.get("final_answer", "")
     question = state.get("question", "")
     chunks = state.get("chunks", [])
+    research_output = state.get("research_output", "")
     
     if not final_answer or len(final_answer) < 50:
         state["reflection_passed"] = False
@@ -23,29 +24,35 @@ def reflection_agent(state: AgentState) -> AgentState:
         return state
     
     sources_summary = ""
-    for i, chunk in enumerate(chunks[:3]):
+    for i, chunk in enumerate(chunks[:5]):
         page = chunk.get("page_number", "N/A")
-        content_preview = chunk.get("content", "")[:150]
+        content_preview = chunk.get("content", "")[:200]
         sources_summary += f"[Page {page}]: {content_preview}...\n"
+    
+    answer_summary = final_answer if len(final_answer) <= 3000 else (
+        final_answer[:1500] + "\n...[middle truncated]...\n" + final_answer[-1500:]
+    )
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", """You evaluate financial analysis responses for quality.
 
-Check these criteria:
-1. Does the answer directly address the question asked?
-2. Are claims supported by the source documents?
-3. Are there specific numbers, dates, or facts (not vague statements)?
-4. Is there potential hallucination (claims without source backing)?
+Check:
+1. Does the answer address the question?
+2. Are numbers/claims backed by sources or research output?
+3. Any obvious fabrications (data not in sources)?
 
-Respond with ONLY one of:
-- "APPROVED" if the answer is good
-- "NEEDS_DISCLAIMER: [reason]" if answer might be incomplete or uncertain"""),
+Respond with ONLY:
+- "APPROVED" if good
+- "NEEDS_DISCLAIMER: [brief reason]" if incomplete/uncertain"""),
         ("user", """Question: {question}
 
-Answer to evaluate:
+Answer:
 {answer}
 
-Available sources (partial):
+Research found:
+{research}
+
+Sources:
 {sources}
 
 Evaluate:""")
@@ -56,7 +63,8 @@ Evaluate:""")
     try:
         response = chain.invoke({
             "question": question,
-            "answer": final_answer[:2000],
+            "answer": answer_summary,
+            "research": research_output[:1000] if research_output else "No research output",
             "sources": sources_summary
         })
         

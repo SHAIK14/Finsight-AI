@@ -1,5 +1,4 @@
 from typing import List, Dict
-from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from app.agents.state import AgentState
@@ -13,71 +12,67 @@ llm = ChatOpenAI(
     temperature=0
 )
 
-@tool
-def risk_search_tool(chunks: List[Dict]) -> str:
-    """Find and extract risk-related content from chunks."""
+def extract_risk_content(chunks: List[Dict]) -> str:
     if not chunks:
-        return "No chunks available for risk analysis"
+        return "No documents available"
     
-    risk_keywords = ["risk", "uncertainty", "loss", "litigation", "compliance", "regulatory", "market conditions", "competition"]
+    risk_keywords = ["risk", "uncertainty", "loss", "litigation", "compliance", 
+                     "regulatory", "market conditions", "competition", "threat",
+                     "challenge", "volatility", "exposure", "liability"]
     
-    risk_related_chunks = []
-    for i, chunk in enumerate(chunks):
-        content_lower = chunk["content"].lower()
+    risk_chunks = []
+    for chunk in chunks:
+        content_lower = chunk.get("content", "").lower()
         if any(keyword in content_lower for keyword in risk_keywords):
-            chunk_text = (
-                f"[Risk Chunk {i+1}] (Page {chunk['page_number']})\n"
-                f"{chunk['content']}\n"
-            )
-            risk_related_chunks.append(chunk_text)
+            page = chunk.get('page_number', 'N/A')
+            content = chunk.get('content', '')[:400]
+            risk_chunks.append(f"[Page {page}]\n{content}")
     
-    if not risk_related_chunks:
-        return "No risk-related content found in chunks"
+    if not risk_chunks:
+        return "No explicit risk sections found in documents"
     
-    return "\n".join(risk_related_chunks)
+    return "\n---\n".join(risk_chunks[:5])
 
 def risk_agent(state: AgentState) -> AgentState:
     research_output = state.get("research_output", "")
+    chunks = state.get("chunks", [])
     
     if not research_output:
-        state["risk_output"] = "No research findings to analyze for risks"
+        state["risk_output"] = "No research findings to analyze"
         state["next_agent"] = "synthesis"
         return state
     
-    tools = [risk_search_tool]
-    llm_with_tools = llm.bind_tools(tools)
+    risk_content = extract_risk_content(chunks)
     
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a risk analysis agent for financial documents.
+        ("system", """You are a financial risk analyst. Identify risks from the research and documents.
 
-Your job: Identify and assess risks mentioned in the research findings and documents.
+Categorize risks by severity:
+🔴 HIGH: Material risks that could significantly impact financials
+🟡 MEDIUM: Notable risks requiring monitoring
+🟢 LOW: Minor risks with limited impact
 
-Available tools:
-1. risk_search_tool: Find risk-related sections in source chunks
+For each risk:
+- State what the risk is
+- Why it matters (potential impact)
+- Page reference if from document
 
-Analyze:
-- What risks are mentioned?
-- How severe are they?
-- Are they quantified?
-- Any mitigation strategies mentioned?
-
-Output format:
-🔴 High severity risks
-🟡 Medium severity risks
-🟢 Low severity risks
-
-Include page references and specifics."""),
+Be concise. Max 3-5 key risks."""),
         ("user", """Research findings:
 {research_output}
+
+Risk-related document sections:
+{risk_content}
 
 Analyze risks:""")
     ])
     
-    chain = prompt | llm_with_tools
+    chain = prompt | llm
     
     try:
         response = chain.invoke({
-            "research_output": research_output
+            "research_output": research_output,
+            "risk_content": risk_content
         })
         risk_findings = response.content
     except Exception as e:

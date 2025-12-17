@@ -4,6 +4,7 @@ import { useToast } from "./Toast";
 import { DashboardSkeleton } from "./DashboardSkeleton";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
@@ -24,7 +25,6 @@ export function Dashboard({ user, isLoaded }) {
   const { signOut } = useClerk();
   const toast = useToast();
 
-  // State management
   const [userProfile, setUserProfile] = useState(null);
   const [uploadedDocs, setUploadedDocs] = useState([]);
   const [messages, setMessages] = useState([]);
@@ -32,12 +32,14 @@ export function Dashboard({ user, isLoaded }) {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [showUsageTooltip, setShowUsageTooltip] = useState(false);
   const [isQuerying, setIsQuerying] = useState(false);
-  const [chatHistory, setChatHistory] = useState([]); // Store past chat sessions
-  const [currentChatId, setCurrentChatId] = useState(null); // Current active chat
-  const [currentSessionId, setCurrentSessionId] = useState(null); // Current server-side session ID
-  const [currentStatus, setCurrentStatus] = useState(""); // Current processing status
-  const [webSearchSources, setWebSearchSources] = useState([]); // Web search results
-  const [isDataLoading, setIsDataLoading] = useState(true); // Loading state for initial data fetch
+  const [chatHistory, setChatHistory] = useState([]);
+  const [currentChatId, setCurrentChatId] = useState(null);
+  const [currentSessionId, setCurrentSessionId] = useState(null);
+  const [currentStatus, setCurrentStatus] = useState("");
+  const [webSearchSources, setWebSearchSources] = useState([]);
+  const [isDataLoading, setIsDataLoading] = useState(true);
+
+  const abortControllerRef = useRef(null);
 
   // Load all data in parallel on mount
   useEffect(() => {
@@ -381,7 +383,8 @@ export function Dashboard({ user, isLoaded }) {
     try {
       const token = await getToken();
 
-      // Step 4: Make fetch request with streaming to NEW chat-sessions endpoint
+      abortControllerRef.current = new AbortController();
+
       const response = await fetch(`${API_URL}/api/chat-sessions/query`, {
         method: "POST",
         headers: {
@@ -391,8 +394,9 @@ export function Dashboard({ user, isLoaded }) {
         body: JSON.stringify({
           question: question,
           document_ids: uploadedDocs.map((d) => d.id),
-          session_id: currentSessionId, // Include session ID for conversation history
+          session_id: currentSessionId,
         }),
+        signal: abortControllerRef.current.signal,
       });
 
       if (!response.ok) {
@@ -523,10 +527,11 @@ export function Dashboard({ user, isLoaded }) {
         }
       }
     } catch (error) {
+      if (error.name === "AbortError") {
+        return;
+      }
       logger.error("Query error:", error);
       toast.error("Query failed", error.message);
-
-      // Update assistant message with error
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === assistantMessageId
@@ -541,6 +546,38 @@ export function Dashboard({ user, isLoaded }) {
       );
     } finally {
       setIsQuerying(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleCancel = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsQuerying(false);
+      setCurrentStatus("");
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.streaming
+            ? {
+                ...msg,
+                streaming: false,
+                content: msg.content || "Generation cancelled.",
+              }
+            : msg
+        )
+      );
+    }
+  };
+
+  const handleRegenerate = (messageId) => {
+    const messageIndex = messages.findIndex((m) => m.id === messageId);
+    if (messageIndex > 0) {
+      const userMessage = messages[messageIndex - 1];
+      if (userMessage.role === "user") {
+        setMessages((prev) => prev.slice(0, messageIndex - 1));
+        handleQuery(userMessage.content);
+      }
     }
   };
 
@@ -608,7 +645,6 @@ export function Dashboard({ user, isLoaded }) {
         setShowUsageTooltip={setShowUsageTooltip}
       />
 
-      {/* Main Chat Area */}
       <ChatArea
         uploadedDocs={uploadedDocs}
         messages={messages}
@@ -620,6 +656,8 @@ export function Dashboard({ user, isLoaded }) {
         webSearchSources={webSearchSources}
         onUpload={handleUpload}
         onQuery={handleQuery}
+        onCancel={handleCancel}
+        onRegenerate={handleRegenerate}
       />
     </div>
   );
@@ -880,7 +918,6 @@ function Sidebar({
   );
 }
 
-// Chat Area Component
 function ChatArea({
   uploadedDocs,
   messages,
@@ -892,6 +929,8 @@ function ChatArea({
   webSearchSources,
   onUpload,
   onQuery,
+  onCancel,
+  onRegenerate,
 }) {
   const fileInputRef = useRef(null);
   const [query, setQuery] = useState("");
@@ -1023,11 +1062,38 @@ function ChatArea({
             </div>
           </div>
         ) : (
-          // Chat Messages
           <div className="max-w-3xl mx-auto px-6 py-6 space-y-6">
             {messages.map((message, i) => (
-              <ChatMessage key={i} message={message} />
+              <ChatMessage
+                key={message.id || i}
+                message={message}
+                onRegenerate={onRegenerate}
+                isLast={i === messages.length - 1}
+              />
             ))}
+            {isQuerying && (
+              <div className="flex justify-center">
+                <button
+                  onClick={onCancel}
+                  className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-error)]/10 border border-[var(--color-border)] hover:border-[var(--color-error)] rounded-lg text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-error)] transition-all"
+                >
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                  Stop generating
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1361,219 +1427,158 @@ function ChatHistoryItem({ chat, isActive, onClick, onDelete }) {
   );
 }
 
-// Kinetic Progress Indicator - Fluid, Data-Driven Animation
+// Thinking Indicator - Iconic Style
 function KineticProgressIndicator({ status, webSources }) {
-  const [progress, setProgress] = useState(0);
+  const getDisplayText = (statusText) => {
+    if (!statusText) return "Thinking";
+    if (statusText.includes("Loading conversation")) return "Loading context";
+    if (statusText.includes("Understanding")) return "Understanding question";
+    if (statusText.includes("Loading your documents"))
+      return "Loading documents";
+    if (statusText.includes("Analyzing query")) return "Analyzing query";
+    if (statusText.includes("cache")) return "Retrieved from cache";
+    if (statusText.includes("Research agent")) return "Researching documents";
+    if (statusText.includes("Research complete")) return "Research complete";
+    if (statusText.includes("Verification")) return "Verifying facts";
+    if (statusText.includes("Risk agent")) return "Assessing risks";
+    if (statusText.includes("Searching") && statusText.includes("documents"))
+      return "Searching documents";
+    if (statusText.includes("Reranking")) return "Finding best matches";
+    if (statusText.includes("web")) return "Searching the web";
+    if (statusText.includes("Generating")) return "Writing response";
+    if (statusText.includes("Quality") || statusText.includes("Finalizing"))
+      return "Finalizing";
+    if (statusText.includes("✓")) return statusText.replace(" ✓", "");
+    return statusText.replace("...", "");
+  };
 
-  // Simulate smooth progress based on status
-  useEffect(() => {
-    const progressMap = {
-      "Starting...": 5,
-      "Loading conversation history...": 10,
-      "Understanding your question...": 20,
-      "Loading your documents...": 30,
-      "Analyzing query type...": 40,
-      "Embedding your question...": 50,
-      "Retrieved from cache ⚡": 60,
-      Searching: 60, // Partial match for "Searching X documents..."
-      Reranking: 70, // Partial match for "Reranking X chunks..."
-      "Searching the web for recent data... 🌐": 80,
-      "Web search complete": 85,
-      "Running AI agents...": 90,
-      "Generating response...": 95,
-    };
-
-    // Find matching progress
-    let newProgress = 5;
-    for (const [key, value] of Object.entries(progressMap)) {
-      if (status.includes(key)) {
-        newProgress = value;
-        break;
-      }
-    }
-
-    setProgress(newProgress);
-  }, [status]);
+  const displayText = getDisplayText(status);
+  const isComplete = status?.includes("✓");
 
   return (
-    <div className="relative">
-      {/* Main Container */}
-      <div className="bg-gradient-to-br from-[var(--color-bg-secondary)] to-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-2xl p-6 shadow-lg">
-        {/* Header: Animated Dots + Status Text */}
-        <div className="flex items-center gap-4 mb-6">
-          {/* Kinetic Dots - Fluid Animation */}
-          <div className="flex gap-1.5">
+    <div className="space-y-3">
+      {/* Main status line */}
+      <div className="flex items-center gap-2">
+        {/* Iconic animated indicator */}
+        {isComplete ? (
+          <svg
+            className="w-4 h-4 text-[var(--color-success)]"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2.5}
+              d="M5 13l4 4L19 7"
+            />
+          </svg>
+        ) : (
+          <div className="flex items-center gap-1">
             {[0, 1, 2].map((i) => (
               <div
                 key={i}
-                className="w-2.5 h-2.5 rounded-full bg-[var(--color-accent)]"
+                className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent)]"
                 style={{
-                  animation: "kineticPulse 1.5s ease-in-out infinite",
-                  animationDelay: `${i * 0.15}s`,
-                  opacity: 0.4,
+                  animation: "bounce 1.4s ease-in-out infinite",
+                  animationDelay: `${i * 0.16}s`,
                 }}
               />
             ))}
           </div>
-
-          {/* Status Text */}
-          <div className="flex-1">
-            <p className="text-base font-medium text-[var(--color-text-primary)] tracking-tight">
-              {status || "Processing..."}
-            </p>
-          </div>
-        </div>
-
-        {/* Progress Bar - Smooth Animation */}
-        <div className="relative h-1.5 bg-[var(--color-bg-primary)] rounded-full overflow-hidden mb-4">
-          <div
-            className="absolute inset-y-0 left-0 bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-accent)]/80 rounded-full transition-all duration-700 ease-out"
-            style={{
-              width: `${progress}%`,
-              boxShadow: "0 0 12px rgba(var(--color-accent-rgb), 0.5)",
-            }}
-          >
-            {/* Shimmer Effect */}
-            <div
-              className="absolute inset-0 opacity-30"
-              style={{
-                background:
-                  "linear-gradient(90deg, transparent, white, transparent)",
-                animation: "shimmer 2s infinite",
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Progress Percentage */}
-        <div className="text-right">
-          <span className="text-xs font-mono text-[var(--color-text-tertiary)]">
-            {progress}%
-          </span>
-        </div>
-
-        {/* Web Search Sources (if any) */}
-        {webSources && webSources.length > 0 && (
-          <div className="mt-6 pt-6 border-t border-[var(--color-border)]">
-            <div className="flex items-center gap-2 mb-4">
-              <svg
-                className="w-4 h-4 text-[var(--color-accent)]"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"
-                />
-              </svg>
-              <span className="text-sm font-semibold text-[var(--color-text-primary)]">
-                Web sources discovered
-              </span>
-            </div>
-
-            <div className="space-y-2">
-              {webSources.slice(0, 3).map((source, i) => (
-                <div
-                  key={i}
-                  className="bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg p-3 hover:border-[var(--color-accent)] transition-all"
-                  style={{
-                    animation: "slideInUp 0.4s ease-out",
-                    animationDelay: `${i * 0.1}s`,
-                    animationFillMode: "both",
-                  }}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-[var(--color-text-primary)] truncate mb-1">
-                        {source.title || "Web Result"}
-                      </div>
-                      <div className="text-xs text-[var(--color-text-secondary)] line-clamp-2 leading-relaxed">
-                        {source.snippet || source.content}
-                      </div>
-                    </div>
-                    <svg
-                      className="w-4 h-4 text-[var(--color-accent)] flex-shrink-0"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
         )}
+
+        {/* Status text */}
+        <span
+          className={`text-sm ${
+            isComplete
+              ? "text-[var(--color-success)]"
+              : "text-[var(--color-text-secondary)]"
+          }`}
+        >
+          {displayText}
+        </span>
       </div>
 
-      {/* CSS Animations */}
+      {/* Web sources pills */}
+      {webSources && webSources.length > 0 && (
+        <div className="flex flex-wrap gap-2 mt-2">
+          {webSources.slice(0, 4).map((source, i) => {
+            let domain = "web";
+            try {
+              domain = new URL(source.url).hostname
+                .replace("www.", "")
+                .split(".")[0];
+            } catch {}
+            return (
+              <div
+                key={i}
+                className="flex items-center gap-1.5 px-2 py-1 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-md text-xs text-[var(--color-text-secondary)]"
+                style={{
+                  animation: "fadeIn 0.3s ease-out",
+                  animationDelay: `${i * 0.1}s`,
+                  animationFillMode: "both",
+                }}
+              >
+                <svg
+                  className="w-3 h-3 text-[var(--color-accent)]"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"
+                  />
+                </svg>
+                <span className="capitalize">{domain}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <style>{`
-        @keyframes kineticPulse {
-          0%, 100% {
-            transform: scale(1);
-            opacity: 0.4;
-          }
-          50% {
-            transform: scale(1.4);
-            opacity: 1;
-          }
-        }
-
-        @keyframes shimmer {
-          0% {
-            transform: translateX(-100%);
-          }
-          100% {
-            transform: translateX(100%);
-          }
-        }
-
-        @keyframes slideInUp {
-          from {
-            opacity: 0;
-            transform: translateY(10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
+        @keyframes bounce {
+          0%, 80%, 100% { transform: translateY(0); }
+          40% { transform: translateY(-6px); }
         }
       `}</style>
     </div>
   );
 }
 
-// Chat Message Component - ChatGPT Style
-function ChatMessage({ message }) {
+function ChatMessage({ message, onRegenerate, isLast }) {
+  const [copied, setCopied] = useState(false);
+  const [feedback, setFeedback] = useState(null);
   const isUser = message.role === "user";
 
+  const handleCopy = () => {
+    navigator.clipboard.writeText(message.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   if (isUser) {
-    // User message: Compact bubble, right-aligned
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[70%] bg-[var(--color-accent)] text-white rounded-2xl px-4 py-2.5 shadow-sm">
-          <p className="text-[15px] leading-relaxed">{message.content}</p>
+      <div className="flex justify-end animate-fade-in">
+        <div className="max-w-[75%] bg-[var(--color-accent)] text-white rounded-2xl rounded-br-md px-4 py-3 shadow-sm">
+          <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
+            {message.content}
+          </p>
         </div>
       </div>
     );
   }
 
-  // Assistant message: Full-width, ChatGPT style
   return (
-    <div className="flex gap-4 items-start">
-      {/* Assistant Avatar */}
-      <div className="w-8 h-8 rounded-full bg-[var(--color-accent)]/10 flex items-center justify-center flex-shrink-0 mt-1">
+    <div className="flex gap-3 items-start group animate-fade-in">
+      <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[var(--color-accent)] to-[var(--color-accent)]/70 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-sm">
         <svg
-          className="w-4 h-4 text-[var(--color-accent)]"
+          className="w-4 h-4 text-white"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -1582,14 +1587,12 @@ function ChatMessage({ message }) {
             strokeLinecap="round"
             strokeLinejoin="round"
             strokeWidth={2}
-            d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+            d="M13 10V3L4 14h7v7l9-11h-7z"
           />
         </svg>
       </div>
 
-      {/* Content */}
       <div className="flex-1 space-y-4">
-        {/* Kinetic Progress Indicator (shown while streaming and no content yet) */}
         {message.streaming && message.status && !message.content && (
           <KineticProgressIndicator
             status={message.status}
@@ -1599,59 +1602,178 @@ function ChatMessage({ message }) {
 
         {/* Markdown Content */}
         {message.content && (
-          <div
-            className="prose prose-sm max-w-none
-          prose-headings:font-semibold prose-headings:text-[var(--color-text-primary)] prose-headings:mb-3 prose-headings:mt-4 first:prose-headings:mt-0
-          prose-p:text-[var(--color-text-primary)] prose-p:leading-relaxed prose-p:my-3 first:prose-p:mt-0 last:prose-p:mb-0
-          prose-strong:text-[var(--color-text-primary)] prose-strong:font-semibold
-          prose-ul:my-3 prose-ul:list-disc prose-ul:pl-6
-          prose-ol:my-3 prose-ol:list-decimal prose-ol:pl-6
-          prose-li:text-[var(--color-text-primary)] prose-li:my-1.5
-          prose-code:text-[var(--color-accent)] prose-code:bg-[var(--color-bg-secondary)] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:font-mono prose-code:before:content-[''] prose-code:after:content-['']
-          prose-pre:bg-transparent prose-pre:p-0 prose-pre:m-0
-          prose-table:border-collapse prose-table:w-full prose-table:my-4
-          prose-th:border prose-th:border-[var(--color-border)] prose-th:bg-[var(--color-bg-secondary)] prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:text-[var(--color-text-primary)]
-          prose-td:border prose-td:border-[var(--color-border)] prose-td:px-3 prose-td:py-2 prose-td:text-[var(--color-text-primary)]
-          prose-a:text-[var(--color-accent)] prose-a:no-underline hover:prose-a:underline
-          prose-blockquote:border-l-4 prose-blockquote:border-[var(--color-accent)] prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-[var(--color-text-secondary)]
-        "
-          >
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                code({ node, inline, className, children, ...props }) {
-                  const match = /language-(\w+)/.exec(className || "");
-                  const language = match ? match[1] : "";
-
-                  if (!inline && language) {
-                    return (
-                      <CodeBlock
-                        language={language}
-                        code={String(children).replace(/\n$/, "")}
-                      />
-                    );
-                  }
-
-                  return (
-                    <code className={className} {...props}>
-                      {children}
-                    </code>
-                  );
-                },
-              }}
+          <div className="relative">
+            <div
+              className="prose prose-sm max-w-none
+            prose-headings:font-semibold prose-headings:text-[var(--color-text-primary)] prose-headings:mb-3 prose-headings:mt-4 first:prose-headings:mt-0
+            prose-p:text-[var(--color-text-primary)] prose-p:leading-relaxed prose-p:my-3 first:prose-p:mt-0 last:prose-p:mb-0
+            prose-strong:text-[var(--color-text-primary)] prose-strong:font-semibold
+            prose-ul:my-3 prose-ul:list-disc prose-ul:pl-6
+            prose-ol:my-3 prose-ol:list-decimal prose-ol:pl-6
+            prose-li:text-[var(--color-text-primary)] prose-li:my-1.5
+            prose-code:text-[var(--color-accent)] prose-code:bg-[var(--color-bg-secondary)] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:font-mono prose-code:before:content-[''] prose-code:after:content-['']
+            prose-pre:bg-transparent prose-pre:p-0 prose-pre:m-0
+            prose-table:border-collapse prose-table:w-full prose-table:my-4
+            prose-th:border prose-th:border-[var(--color-border)] prose-th:bg-[var(--color-bg-secondary)] prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:text-[var(--color-text-primary)]
+            prose-td:border prose-td:border-[var(--color-border)] prose-td:px-3 prose-td:py-2 prose-td:text-[var(--color-text-primary)]
+            prose-a:text-[var(--color-accent)] prose-a:no-underline hover:prose-a:underline
+            prose-blockquote:border-l-4 prose-blockquote:border-[var(--color-accent)] prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-[var(--color-text-secondary)]
+          "
             >
-              {message.content}
-            </ReactMarkdown>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeRaw]}
+                components={{
+                  code({ node, inline, className, children, ...props }) {
+                    const match = /language-(\w+)/.exec(className || "");
+                    const language = match ? match[1] : "";
+
+                    if (!inline && language) {
+                      return (
+                        <CodeBlock
+                          language={language}
+                          code={String(children).replace(/\n$/, "")}
+                        />
+                      );
+                    }
+
+                    return (
+                      <code className={className} {...props}>
+                        {children}
+                      </code>
+                    );
+                  },
+                }}
+              >
+                {message.content}
+              </ReactMarkdown>
+              {message.streaming && (
+                <span className="inline-block w-2 h-5 ml-1 bg-[var(--color-accent)] animate-pulse rounded-sm" />
+              )}
+            </div>
           </div>
         )}
 
-        {/* Sources and Web Results */}
-        {message.sources && message.sources.length > 0 && (
-          <SourceCitations sources={message.sources} />
-        )}
+        {message.sources &&
+          message.sources.length > 0 &&
+          !message.streaming && <SourceCitations sources={message.sources} />}
 
-        {message.webSources && message.webSources.length > 0 && (
-          <WebSourceCards sources={message.webSources} />
+        {message.webSources &&
+          message.webSources.length > 0 &&
+          !message.streaming && <WebSourceCards sources={message.webSources} />}
+
+        {!message.streaming && message.content && (
+          <div className="flex items-center gap-1 pt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={handleCopy}
+              className="p-1.5 hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors"
+              title="Copy response"
+            >
+              {copied ? (
+                <svg
+                  className="w-4 h-4 text-green-500"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M5 13l4 4L19 7"
+                  />
+                </svg>
+              ) : (
+                <svg
+                  className="w-4 h-4 text-[var(--color-text-tertiary)]"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                  />
+                </svg>
+              )}
+            </button>
+
+            {isLast && onRegenerate && (
+              <button
+                onClick={() => onRegenerate(message.id)}
+                className="p-1.5 hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors"
+                title="Regenerate response"
+              >
+                <svg
+                  className="w-4 h-4 text-[var(--color-text-tertiary)]"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  />
+                </svg>
+              </button>
+            )}
+
+            <button
+              onClick={() => setFeedback(feedback === "up" ? null : "up")}
+              className={`p-1.5 hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors ${
+                feedback === "up" ? "bg-green-500/10" : ""
+              }`}
+              title="Good response"
+            >
+              <svg
+                className={`w-4 h-4 ${
+                  feedback === "up"
+                    ? "text-green-500"
+                    : "text-[var(--color-text-tertiary)]"
+                }`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5"
+                />
+              </svg>
+            </button>
+
+            <button
+              onClick={() => setFeedback(feedback === "down" ? null : "down")}
+              className={`p-1.5 hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors ${
+                feedback === "down" ? "bg-red-500/10" : ""
+              }`}
+              title="Bad response"
+            >
+              <svg
+                className={`w-4 h-4 ${
+                  feedback === "down"
+                    ? "text-red-500"
+                    : "text-[var(--color-text-tertiary)]"
+                }`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018a2 2 0 01.485.06l3.76.94m-7 10v5a2 2 0 002 2h.096c.5 0 .905-.405.905-.904 0-.715.211-1.413.608-2.008L17 13V4m-7 10h2m5-10h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5"
+                />
+              </svg>
+            </button>
+          </div>
         )}
       </div>
     </div>
@@ -1704,40 +1826,16 @@ function CodeBlock({ language, code }) {
   );
 }
 
-// Source Citations Component
 function SourceCitations({ sources }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
 
   if (!sources || sources.length === 0) return null;
 
   return (
-    <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
-      >
-        <div className="flex items-center gap-2">
-          <svg
-            className="w-4 h-4 text-[var(--color-accent)]"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-            />
-          </svg>
-          <span className="text-sm font-medium text-[var(--color-text-primary)]">
-            {sources.length} document source{sources.length !== 1 ? "s" : ""}
-          </span>
-        </div>
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
         <svg
-          className={`w-4 h-4 text-[var(--color-text-tertiary)] transition-transform ${
-            expanded ? "rotate-180" : ""
-          }`}
+          className="w-4 h-4 text-[var(--color-accent)]"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -1746,24 +1844,73 @@ function SourceCitations({ sources }) {
             strokeLinecap="round"
             strokeLinejoin="round"
             strokeWidth={2}
-            d="M19 9l-7 7-7-7"
+            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
           />
         </svg>
-      </button>
+        <span className="text-sm font-medium text-[var(--color-text-primary)]">
+          Sources
+        </span>
+      </div>
 
-      {expanded && (
-        <div className="border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-          {sources.slice(0, 5).map((source, i) => (
-            <div key={i} className="px-4 py-3 bg-[var(--color-bg-primary)]">
-              <div className="text-xs text-[var(--color-text-secondary)] mb-1">
-                {source.document_name || "Document"} • Page{" "}
-                {source.page_number || "N/A"}
+      <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+        {sources.slice(0, 5).map((source, i) => (
+          <button
+            key={i}
+            onClick={() => setExpandedId(expandedId === i ? null : i)}
+            className={`flex-shrink-0 w-36 p-3 rounded-lg border text-left transition-all ${
+              expandedId === i
+                ? "border-[var(--color-accent)] bg-[var(--color-accent)]/5"
+                : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:border-[var(--color-accent)]/50"
+            }`}
+          >
+            <div className="flex items-center gap-2 mb-1.5">
+              <div className="w-6 h-6 rounded bg-[var(--color-accent)]/10 flex items-center justify-center">
+                <span className="text-xs font-semibold text-[var(--color-accent)]">
+                  {i + 1}
+                </span>
               </div>
-              <div className="text-sm text-[var(--color-text-primary)] leading-relaxed line-clamp-3">
-                {source.content || source.text}
-              </div>
+              <span className="text-xs font-medium text-[var(--color-text-secondary)]">
+                Page {source.page_number || "?"}
+              </span>
             </div>
-          ))}
+            <div className="text-xs text-[var(--color-text-primary)] line-clamp-2 leading-relaxed">
+              {source.document_name || "Document"}
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {expandedId !== null && sources[expandedId] && (
+        <div className="p-3 rounded-lg border border-[var(--color-accent)]/30 bg-[var(--color-bg-secondary)]">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-[var(--color-accent)]">
+              Source {expandedId + 1} • Page{" "}
+              {sources[expandedId].page_number || "N/A"}
+            </span>
+            <button
+              onClick={() => setExpandedId(null)}
+              className="p-1 hover:bg-[var(--color-bg-tertiary)] rounded"
+            >
+              <svg
+                className="w-3 h-3 text-[var(--color-text-tertiary)]"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          </div>
+          <p className="text-sm text-[var(--color-text-primary)] leading-relaxed">
+            {sources[expandedId].content ||
+              sources[expandedId].content_preview ||
+              "No preview available"}
+          </p>
         </div>
       )}
     </div>

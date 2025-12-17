@@ -15,7 +15,13 @@ from app.services.query_preprocessor import preprocess_query
 from app.services.redis_cache import cache_service
 from app.services.query_router import classify_query
 from app.services.tavily_search import search_financial_data
-from app.agents.supervisor import agent_graph
+from app.agents.supervisor import agent_graph, pre_synthesis_graph
+from app.agents.synthesis import stream_synthesis
+from app.agents.reflection import reflection_agent
+from app.agents.research import research_agent
+from app.agents.verification import verification_agent
+from app.agents.risk import risk_agent
+import time
 from app.services.chat_session import (
     create_session,
     get_session,
@@ -211,13 +217,6 @@ async def chat_query(
                     # Stream web results immediately
                     yield f"data: {json.dumps({'type': 'web_search', 'sources': web_results})}\n\n"
 
-            print(f"🤖 [AGENT GRAPH] Starting agent graph with streaming...")
-            print(f"📦 [AGENT INPUT] Chunks count: {len(reranked_chunks)}")
-            print(f"📦 [AGENT INPUT] Chunks type: {type(reranked_chunks)}")
-            if reranked_chunks:
-                print(f"📦 [AGENT INPUT] First chunk type: {type(reranked_chunks[0])}")
-                print(f"📦 [AGENT INPUT] First chunk sample: {str(reranked_chunks[0])[:200]}")
-
             initial_state = {
                 "messages": [],
                 "question": rewritten_question,
@@ -235,45 +234,76 @@ async def chat_query(
                 "reflection_passed": False
             }
 
-            agent_display_names = {
-                "research": "Research agent analyzing documents",
-                "verification": "Verification agent checking facts",
-                "risk": "Risk analysis agent evaluating concerns",
-                "synthesis": "Synthesis agent generating final answer",
-                "reflection": "Quality check complete"
-            }
+            agents_needed = route_info.get("agents_needed", ["research"])
+            current_state = initial_state.copy()
 
-            print(f"🔄 [STREAMING] Starting agent_graph.stream() with mode='updates'")
+            # Research Agent (always runs)
+            yield f"data: {json.dumps({'type': 'status', 'content': 'Research agent analyzing...'})}\n\n"
+            print(f"🔍 [AGENT] Research agent starting...")
+            current_state = await asyncio.to_thread(research_agent, current_state)
+            yield f"data: {json.dumps({'type': 'status', 'content': 'Research complete ✓'})}\n\n"
+            print(f"✅ [AGENT] Research agent complete")
+
+            # Verification Agent (if needed)
+            if "verification" in agents_needed:
+                yield f"data: {json.dumps({'type': 'status', 'content': 'Verification agent checking facts...'})}\n\n"
+                print(f"🔍 [AGENT] Verification agent starting...")
+                current_state = await asyncio.to_thread(verification_agent, current_state)
+                yield f"data: {json.dumps({'type': 'status', 'content': 'Verification complete ✓'})}\n\n"
+                print(f"✅ [AGENT] Verification agent complete")
+
+            # Risk Agent (if needed)
+            if "risk" in agents_needed:
+                yield f"data: {json.dumps({'type': 'status', 'content': 'Risk agent assessing...'})}\n\n"
+                print(f"🔍 [AGENT] Risk agent starting...")
+                current_state = await asyncio.to_thread(risk_agent, current_state)
+                yield f"data: {json.dumps({'type': 'status', 'content': 'Risk assessment complete ✓'})}\n\n"
+                print(f"✅ [AGENT] Risk agent complete")
+
+            yield f"data: {json.dumps({'type': 'status', 'content': 'Generating response...'})}\n\n"
+            print(f"🔄 [SYNTHESIS] Starting token streaming...")
+            
             full_answer = ""
-
-            for event in agent_graph.stream(initial_state, stream_mode="updates"):
-                print(f"📨 [STREAM EVENT] Received: {list(event.keys())}")
-
-                for node_name, state_update in event.items():
-                    print(f"🎯 [NODE COMPLETE] '{node_name}' finished")
-
-                    agent_status = agent_display_names.get(node_name, f"{node_name} agent working")
-                    yield f"data: {json.dumps({'type': 'status', 'content': agent_status + ' ✓'})}\n\n"
-                    print(f"✅ [SSE SENT] Status: {agent_status}")
-
-                    if node_name == "reflection" and "final_answer" in state_update:
-                        full_answer = state_update["final_answer"]
-                        print(f"🎉 [REFLECTION COMPLETE] Final answer length: {len(full_answer)} characters")
-                    elif node_name == "synthesis" and "final_answer" in state_update and not full_answer:
-                        full_answer = state_update["final_answer"]
-
-            print(f"✅ [AGENT GRAPH] All agents completed. Total answer length: {len(full_answer)} characters")
+            token_count = 0
+            token_buffer = ""
+            
+            for token in stream_synthesis(current_state):
+                full_answer += token
+                token_buffer += token
+                token_count += 1
+                
+                # Send tokens in small batches (every 3-5 tokens or on whitespace)
+                if len(token_buffer) >= 4 or token in [" ", "\n", ".", ",", "!", "?"]:
+                    yield f"data: {json.dumps({'type': 'token', 'content': token_buffer})}\n\n"
+                    token_buffer = ""
+                    await asyncio.sleep(0.01)  # Small delay to force flush
+                
+                if token_count % 50 == 0:
+                    print(f"📝 [STREAMING] {token_count} tokens sent...")
+            
+            # Send any remaining buffer
+            if token_buffer:
+                yield f"data: {json.dumps({'type': 'token', 'content': token_buffer})}\n\n"
+            
+            print(f"✅ [SYNTHESIS] Complete. {token_count} tokens, {len(full_answer)} chars")
+            
+            current_state["final_answer"] = full_answer
+            yield f"data: {json.dumps({'type': 'status', 'content': 'Quality check...'})}\n\n"
+            
+            print(f"🔍 [REFLECTION] Running quality check...")
+            final_state = await asyncio.to_thread(reflection_agent, current_state)
+            full_answer = final_state.get("final_answer", full_answer)
+            
+            if final_state.get("final_answer") != current_state.get("final_answer"):
+                disclaimer = final_state["final_answer"][len(current_state["final_answer"]):]
+                if disclaimer:
+                    yield f"data: {json.dumps({'type': 'token', 'content': disclaimer})}\n\n"
+            
+            print(f"✅ [REFLECTION] Complete")
 
             save_message(session_id, "user", original_question, None)
             save_message(session_id, "assistant", full_answer, reranked_chunks)
 
-            # Stream answer token by token
-            chunk_size = 5
-            for i in range(0, len(full_answer), chunk_size):
-                chunk = full_answer[i:i+chunk_size]
-                yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
-
-            # Send completion with sources and web results
             completion_data = {
                 'type': 'done',
                 'sources': reranked_chunks,
@@ -305,7 +335,10 @@ async def chat_query(
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Content-Type": "text/event-stream",
+            "Transfer-Encoding": "chunked",
         }
     )
