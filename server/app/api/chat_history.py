@@ -143,14 +143,20 @@ async def list_chats(
                 .execute()
 
             # Convert to frontend format
-            messages = [
-                {
-                    "id": idx + 1,
+            # For document messages, include documentData from sources
+            messages = []
+            for idx, msg in enumerate(messages_response.data):
+                message_data = {
+                    "id": msg["id"],  # Use actual message ID for delete operations
                     "role": msg["role"],
                     "content": msg["content"]
                 }
-                for idx, msg in enumerate(messages_response.data)
-            ]
+                
+                # For document messages, include the document metadata
+                if msg["role"] == "document" and msg.get("sources"):
+                    message_data["documentData"] = msg["sources"]
+                
+                messages.append(message_data)
 
             chats.append({
                 "id": session["id"],
@@ -203,14 +209,20 @@ async def get_chat(
             .execute()
 
         # Convert to frontend format
-        messages = [
-            {
-                "id": idx + 1,
+        # For document messages, include documentData from sources
+        messages = []
+        for idx, msg in enumerate(messages_response.data):
+            message_data = {
+                "id": msg["id"],  # Use actual message ID for delete operations
                 "role": msg["role"],
                 "content": msg["content"]
             }
-            for idx, msg in enumerate(messages_response.data)
-        ]
+            
+            # For document messages, include the document metadata
+            if msg["role"] == "document" and msg.get("sources"):
+                message_data["documentData"] = msg["sources"]
+            
+            messages.append(message_data)
 
         return {
             "id": session["id"],

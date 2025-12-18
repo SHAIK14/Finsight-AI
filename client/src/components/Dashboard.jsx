@@ -209,6 +209,22 @@ export function Dashboard({ user, isLoaded }) {
   };
 
   const handleUpload = async (file) => {
+    /**
+     * Upload a PDF and add it to the current chat as a document message
+     *
+     * How it works:
+     * 1. Validate file type and upload limits
+     * 2. Upload to backend (/api/documents/upload)
+     * 3. Create document message in chat (/api/chat-sessions/document-message)
+     * 4. Add document message to local messages state
+     * 5. Refresh documents list and user profile
+     *
+     * Why add to chat?
+     * - User can see uploaded documents in conversation
+     * - Can delete documents directly from chat
+     * - Better UX - like ChatGPT's file attachments
+     */
+
     // Check if user can upload (free users have limit)
     if (userProfile?.role === "free" && userProfile?.uploads_limit) {
       if (userProfile.uploads_this_month >= userProfile.uploads_limit) {
@@ -237,6 +253,7 @@ export function Dashboard({ user, isLoaded }) {
         setUploadProgress((prev) => Math.min(prev + 10, 90));
       }, 200);
 
+      // Step 1: Upload the file
       const response = await fetch(`${API_URL}/api/documents/upload`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
@@ -250,10 +267,59 @@ export function Dashboard({ user, isLoaded }) {
         throw new Error(error.detail || "Upload failed");
       }
 
-      const data = await response.json();
+      const uploadData = await response.json();
       setUploadProgress(100);
 
-      // Refresh documents and user profile
+      // Step 2: Create document message in chat session
+      const docMessageResponse = await fetch(
+        `${API_URL}/api/chat-sessions/document-message`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            session_id: currentSessionId,
+            document_id: uploadData.document.id,
+            file_name: uploadData.document.fileName,
+            file_size: uploadData.document.fileSize,
+            file_url: "", // Not needed for display
+            status: uploadData.document.status,
+          }),
+        }
+      );
+
+      if (docMessageResponse.ok) {
+        const docMessageData = await docMessageResponse.json();
+
+        // Update session ID if a new one was created
+        if (docMessageData.session_id && !currentSessionId) {
+          setCurrentSessionId(docMessageData.session_id);
+        }
+
+        // Step 3: Add document message to local state
+        const documentMessage = {
+          id: docMessageData.message.id,
+          role: "document",
+          content: uploadData.document.fileName,
+          documentData: {
+            document_id: uploadData.document.id,
+            fileName: uploadData.document.fileName,
+            fileSize: uploadData.document.fileSize,
+            status: uploadData.document.status,
+          },
+          timestamp: new Date(),
+        };
+
+        setMessages((prev) => [...prev, documentMessage]);
+        logger.log(
+          "📎 [UPLOAD] Document message added to chat:",
+          documentMessage
+        );
+      }
+
+      // Step 4: Refresh documents and user profile
       await fetchDocuments();
       await fetchUserProfile();
 
@@ -319,6 +385,62 @@ export function Dashboard({ user, isLoaded }) {
       toast.success("Chat deleted", "Chat removed successfully");
     } catch (error) {
       logger.error("Delete chat error:", error);
+      toast.error("Delete failed", error.message);
+    }
+  };
+
+  const handleDeleteDocFromChat = async (documentId, messageId) => {
+    /**
+     * Delete a document from within the chat
+     *
+     * How it works:
+     * 1. Immediately remove from UI (optimistic update)
+     * 2. Call backend to delete document message + actual document
+     * 3. Refresh documents list
+     *
+     * Why optimistic update?
+     * - Prevents double-click issues
+     * - Better UX - instant feedback
+     */
+    if (!currentSessionId || !documentId) {
+      return; // Silently ignore if missing data
+    }
+
+    // Immediately remove from UI to prevent double-clicks
+    setMessages((prev) => prev.filter((msg) => msg.id !== messageId));
+
+    try {
+      const token = await getToken();
+      const response = await fetch(
+        `${API_URL}/api/chat-sessions/document-message`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            session_id: currentSessionId,
+            document_id: documentId,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        // Don't show error for 404 (already deleted)
+        if (response.status !== 404) {
+          const error = await response.json();
+          throw new Error(error.detail || "Delete failed");
+        }
+      }
+
+      // Refresh documents list
+      await fetchDocuments();
+      await fetchUserProfile();
+
+      toast.success("Document deleted", "Document removed successfully");
+    } catch (error) {
+      logger.error("Delete document from chat error:", error);
       toast.error("Delete failed", error.message);
     }
   };
@@ -610,13 +732,22 @@ export function Dashboard({ user, isLoaded }) {
      *
      * How it works:
      * 1. Find chat in history
-     * 2. Load its messages
+     * 2. Load its messages (including document messages with documentData)
      * 3. Set as current chat
      * 4. Set session ID so queries continue the conversation
+     *
+     * Document messages:
+     * - Have role="document"
+     * - Include documentData with fileName, fileSize, status, document_id
      */
     const chat = chatHistory.find((c) => c.id === chatId);
     if (chat) {
-      setMessages(chat.messages);
+      // Messages from backend already include documentData for document messages
+      const formattedMessages = chat.messages.map((msg) => ({
+        ...msg,
+        timestamp: new Date(),
+      }));
+      setMessages(formattedMessages);
       setCurrentChatId(chatId);
       setCurrentSessionId(chatId); // Use chat ID as session ID
     }
@@ -658,6 +789,7 @@ export function Dashboard({ user, isLoaded }) {
         onQuery={handleQuery}
         onCancel={handleCancel}
         onRegenerate={handleRegenerate}
+        onDeleteDocFromChat={handleDeleteDocFromChat}
       />
     </div>
   );
@@ -931,16 +1063,89 @@ function ChatArea({
   onQuery,
   onCancel,
   onRegenerate,
+  onDeleteDocFromChat,
 }) {
+  const toast = useToast();
   const fileInputRef = useRef(null);
   const [query, setQuery] = useState("");
   const [showUploadPrompt, setShowUploadPrompt] = useState(false);
 
+  // Get document messages from current chat (shown as chips near input)
+  const attachedDocs = messages.filter((msg) => msg.role === "document");
+
   const suggestedQueries = [
-    "What was the revenue growth?",
-    "Summarize key financial risks",
-    "Compare quarterly performance",
-    "Extract all metrics and KPIs",
+    {
+      text: "What was the revenue growth?",
+      icon: (
+        <svg
+          className="w-4 h-4"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={1.5}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941"
+          />
+        </svg>
+      ),
+    },
+    {
+      text: "Summarize key financial risks",
+      icon: (
+        <svg
+          className="w-4 h-4"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={1.5}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+          />
+        </svg>
+      ),
+    },
+    {
+      text: "Compare quarterly performance",
+      icon: (
+        <svg
+          className="w-4 h-4"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={1.5}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"
+          />
+        </svg>
+      ),
+    },
+    {
+      text: "Extract all metrics and KPIs",
+      icon: (
+        <svg
+          className="w-4 h-4"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={1.5}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12"
+          />
+        </svg>
+      ),
+    },
   ];
 
   const handleSubmit = (e) => {
@@ -949,6 +1154,10 @@ function ChatArea({
 
     if (uploadedDocs.length === 0) {
       setShowUploadPrompt(true);
+      toast.warning(
+        "No documents",
+        "Please upload a document first to ask questions"
+      );
       return;
     }
 
@@ -960,6 +1169,10 @@ function ChatArea({
   const handleSuggestedQuery = (suggestedQuery) => {
     if (uploadedDocs.length === 0) {
       setShowUploadPrompt(true);
+      toast.warning(
+        "No documents",
+        "Please upload a document first to ask questions"
+      );
       return;
     }
     onQuery(suggestedQuery);
@@ -981,79 +1194,120 @@ function ChatArea({
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto">
         {!hasMessages ? (
-          // Empty Chat State - Show suggested queries (even if user has documents/previous chats)
+          // Empty Chat State - Premium design
           <div className="h-full flex items-center justify-center px-6">
-            <div className="max-w-2xl w-full">
-              <div className="text-center mb-12">
-                <h2 className="text-2xl font-serif font-semibold mb-3 text-[var(--color-text-primary)]">
-                  What would you like to know?
-                </h2>
-                <p className="text-[var(--color-text-secondary)] text-base leading-relaxed">
+            <div className="max-w-xl w-full">
+              {/* Logo Icon */}
+              <div className="flex justify-center mb-8">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[var(--color-bg-secondary)] to-[var(--color-bg-tertiary)] border border-[var(--color-border)] flex items-center justify-center">
+                  <svg
+                    width="32"
+                    height="32"
+                    viewBox="0 0 40 40"
+                    fill="none"
+                    className="text-[var(--color-text-primary)]"
+                  >
+                    <circle
+                      cx="20"
+                      cy="20"
+                      r="17"
+                      stroke="currentColor"
+                      strokeWidth="1"
+                      opacity="0.1"
+                    />
+                    <circle
+                      cx="20"
+                      cy="20"
+                      r="12"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      opacity="0.3"
+                    />
+                    <circle
+                      cx="20"
+                      cy="20"
+                      r="6"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    />
+                    <circle cx="20" cy="20" r="1.5" fill="currentColor" />
+                    <path
+                      d="M27 13 L32 8"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                    />
+                    <circle cx="34" cy="6" r="2.5" fill="currentColor" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* Heading */}
+              <div className="text-center mb-10">
+                <h2 className="text-2xl font-medium tracking-tight mb-3 text-[var(--color-text-primary)]">
                   {hasDocuments
-                    ? "Ask anything about your uploaded documents"
-                    : "Upload a financial document to begin analyzing with AI"}
+                    ? "What would you like to analyze?"
+                    : "Start with a document"}
+                </h2>
+                <p className="text-sm text-[var(--color-text-tertiary)] leading-relaxed max-w-sm mx-auto">
+                  {hasDocuments
+                    ? "Ask any question about your financial documents"
+                    : "Upload a 10-K, 10-Q, or earnings report to get started"}
                 </p>
               </div>
 
-              <div className="space-y-3">
+              {/* Suggested Queries - 2x2 Grid */}
+              <div className="grid grid-cols-2 gap-3">
                 {suggestedQueries.map((suggestion, i) => (
                   <button
                     key={i}
                     onClick={() => {
                       if (hasDocuments) {
-                        // User has documents - run the query directly
-                        onQuery(suggestion);
+                        onQuery(suggestion.text);
                       } else {
-                        // No documents - show upload prompt
-                        setQuery(suggestion);
+                        setQuery(suggestion.text);
                         setShowUploadPrompt(true);
                       }
                     }}
-                    className="w-full text-left px-5 py-4 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] hover:border-[var(--color-accent)] rounded-xl text-[var(--color-text-primary)] transition-all group"
+                    className="group text-left p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] hover:bg-[var(--color-bg-secondary)] hover:border-[var(--color-accent)]/50 transition-all duration-200"
                   >
-                    <div className="flex items-center gap-3">
-                      <svg
-                        className="w-4 h-4 text-[var(--color-text-tertiary)] group-hover:text-[var(--color-accent)] transition-colors flex-shrink-0"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                        />
-                      </svg>
-                      <span className="text-sm">{suggestion}</span>
+                    <div className="w-8 h-8 rounded-lg bg-[var(--color-bg-tertiary)] group-hover:bg-[var(--color-accent)]/10 flex items-center justify-center mb-3 transition-colors">
+                      <span className="text-[var(--color-text-tertiary)] group-hover:text-[var(--color-accent)] transition-colors">
+                        {suggestion.icon}
+                      </span>
                     </div>
+                    <span className="text-sm text-[var(--color-text-secondary)] group-hover:text-[var(--color-text-primary)] transition-colors leading-snug block">
+                      {suggestion.text}
+                    </span>
                   </button>
                 ))}
               </div>
 
+              {/* Upload prompt */}
               {showUploadPrompt && !hasDocuments && (
-                <div className="mt-6 p-4 bg-[var(--color-accent)]/5 border border-[var(--color-accent)]/20 rounded-xl">
-                  <div className="flex items-start gap-3">
-                    <svg
-                      className="w-5 h-5 text-[var(--color-accent)] flex-shrink-0 mt-0.5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
+                <div className="mt-6 p-4 rounded-xl bg-[var(--color-accent)]/5 border border-[var(--color-accent)]/20">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-[var(--color-accent)]/10 flex items-center justify-center flex-shrink-0">
+                      <svg
+                        className="w-4 h-4 text-[var(--color-accent)]"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
                         strokeWidth={2}
-                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M12 4v16m8-8H4"
+                        />
+                      </svg>
+                    </div>
                     <div>
-                      <p className="text-sm font-medium text-[var(--color-text-primary)] mb-2">
+                      <p className="text-sm font-medium text-[var(--color-text-primary)]">
                         Upload a document first
                       </p>
-                      <p className="text-xs text-[var(--color-text-secondary)]">
-                        Click the paperclip icon below to upload a financial
-                        document (10-K, 10-Q, or earnings report).
+                      <p className="text-xs text-[var(--color-text-tertiary)] mt-0.5">
+                        Use the paperclip icon below
                       </p>
                     </div>
                   </div>
@@ -1068,6 +1322,7 @@ function ChatArea({
                 key={message.id || i}
                 message={message}
                 onRegenerate={onRegenerate}
+                onDeleteDocument={onDeleteDocFromChat}
                 isLast={i === messages.length - 1}
               />
             ))}
@@ -1101,6 +1356,67 @@ function ChatArea({
       {/* Bottom Input Area - Always visible */}
       <div className="border-t border-[var(--color-border)] bg-[var(--color-bg-primary)] px-6 py-6">
         <div className="max-w-3xl mx-auto">
+          {/* Attached documents chips */}
+          {attachedDocs.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-3">
+              {attachedDocs.map((doc) => {
+                const docData = doc.documentData || doc.sources || {};
+                const fileName = docData.fileName || doc.content || "Document";
+                const documentId = docData.document_id;
+
+                return (
+                  <div
+                    key={doc.id}
+                    className="group inline-flex items-center gap-2 px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg text-sm"
+                  >
+                    {/* PDF icon */}
+                    <svg
+                      className="w-4 h-4 text-red-500 flex-shrink-0"
+                      fill="currentColor"
+                      viewBox="0 0 20 20"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+
+                    {/* Filename */}
+                    <span className="text-[var(--color-text-primary)] truncate max-w-[150px]">
+                      {fileName}
+                    </span>
+
+                    {/* Delete button - shows on hover */}
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onDeleteDocFromChat(documentId, doc.id);
+                      }}
+                      className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 transition-all"
+                      title="Remove document"
+                    >
+                      <svg
+                        className="w-3.5 h-3.5 text-[var(--color-text-tertiary)] hover:text-red-500"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M6 18L18 6M6 6l12 12"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="relative">
             <input
               type="text"
@@ -1555,16 +1871,199 @@ function KineticProgressIndicator({ status, webSources }) {
   );
 }
 
-function ChatMessage({ message, onRegenerate, isLast }) {
+/**
+ * DocumentMessage Component - Displays uploaded document in chat
+ *
+ * How it works:
+ * - Shows a card with document icon, name, size, and status
+ * - Has delete button that removes both message and actual document
+ * - Status badge shows processing state (pending/processed/failed)
+ *
+ * Why in chat?
+ * - User can see what documents are attached to this conversation
+ * - Can delete directly without going to sidebar
+ * - Better visibility of upload context
+ */
+function DocumentMessage({ message, onDelete }) {
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const documentData = message.documentData || message.sources || {};
+  const fileName = documentData.fileName || message.content || "Document";
+  const fileSize = documentData.fileSize || "Unknown size";
+  const status = documentData.status || "pending";
+  const documentId = documentData.document_id;
+
+  const getStatusBadge = () => {
+    switch (status) {
+      case "processed":
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/10 text-green-600 dark:text-green-400">
+            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+              <path
+                fillRule="evenodd"
+                d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                clipRule="evenodd"
+              />
+            </svg>
+            Processed
+          </span>
+        );
+      case "failed":
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-600 dark:text-red-400">
+            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+              <path
+                fillRule="evenodd"
+                d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                clipRule="evenodd"
+              />
+            </svg>
+            Failed
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400">
+            <svg
+              className="w-3 h-3 animate-spin"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
+            </svg>
+            Ready to analyze
+          </span>
+        );
+    }
+  };
+
+  const handleDelete = () => {
+    if (onDelete && documentId) {
+      onDelete(documentId, message.id);
+    }
+    setShowDeleteConfirm(false);
+  };
+
+  return (
+    <div className="flex justify-end animate-fade-in">
+      <div className="max-w-[85%] w-80">
+        <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl rounded-br-md overflow-hidden shadow-sm hover:shadow-md transition-shadow group">
+          {/* Header with icon and delete */}
+          <div className="flex items-center justify-between px-4 py-3 bg-[var(--color-bg-tertiary)]/50">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center">
+                <svg
+                  className="w-4 h-4 text-red-500"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </div>
+              <span className="text-xs font-medium text-[var(--color-text-secondary)]">
+                PDF Document
+              </span>
+            </div>
+
+            {/* Delete button */}
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-red-500/10 transition-all"
+              title="Delete document"
+            >
+              <svg
+                className="w-4 h-4 text-[var(--color-text-tertiary)] hover:text-red-500"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                />
+              </svg>
+            </button>
+          </div>
+
+          {/* Document info */}
+          <div className="px-4 py-3">
+            <div className="flex items-start gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-[var(--color-text-primary)] truncate">
+                  {fileName}
+                </p>
+                <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                  {fileSize}
+                </p>
+              </div>
+            </div>
+
+            {/* Status badge */}
+            <div className="mt-3">{getStatusBadge()}</div>
+          </div>
+
+          {/* Delete confirmation */}
+          {showDeleteConfirm && (
+            <div className="px-4 py-3 bg-red-500/5 border-t border-red-500/20">
+              <p className="text-xs text-[var(--color-text-secondary)] mb-2">
+                Delete this document? This will also remove the file.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDelete}
+                  className="flex-1 px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white text-xs font-medium rounded-lg transition-colors"
+                >
+                  Delete
+                </button>
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="flex-1 px-3 py-1.5 bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-bg-secondary)] text-xs font-medium rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChatMessage({ message, onRegenerate, onDeleteDocument, isLast }) {
   const [copied, setCopied] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const isUser = message.role === "user";
+  const isDocument = message.role === "document";
 
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  // Document messages are shown as chips in the input area, not in chat
+  if (isDocument) {
+    return null;
+  }
 
   if (isUser) {
     return (

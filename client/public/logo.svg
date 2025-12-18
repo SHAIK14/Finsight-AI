@@ -1,0 +1,18 @@
+<svg width="180" height="40" viewBox="0 0 180 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Icon: Abstract lens/insight mark -->
+  <g>
+    <!-- Outer ring -->
+    <circle cx="20" cy="20" r="14" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.3"/>
+    <!-- Inner focus point -->
+    <circle cx="20" cy="20" r="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
+    <!-- Insight ray - diagonal line -->
+    <line x1="26" y1="14" x2="32" y2="8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <!-- Small dot at end of ray -->
+    <circle cx="33" cy="7" r="2" fill="currentColor"/>
+  </g>
+  
+  <!-- Wordmark: FinSight -->
+  <text x="48" y="26" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="500" fill="currentColor" letter-spacing="-0.5">
+    <tspan>Fin</tspan><tspan font-weight="300">Sight</tspan>
+  </text>
+</svg>

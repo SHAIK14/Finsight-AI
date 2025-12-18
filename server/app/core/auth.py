@@ -66,8 +66,17 @@ async def get_current_user(
         )
         
         # Extract user info from payload
+        # Clerk stores user ID in "sub" claim
         clerk_id = payload.get("sub")
+        
+        # Email might be in different places depending on sign-up method
         email = payload.get("email")
+        if not email:
+            email = payload.get("primary_email_address")
+        if not email and payload.get("email_addresses"):
+            email_list = payload.get("email_addresses", [])
+            if email_list and len(email_list) > 0:
+                email = email_list[0].get("email_address")
 
         if not clerk_id:
             raise HTTPException(status_code=401, detail="Invalid token payload")

@@ -24,10 +24,13 @@ from app.agents.risk import risk_agent
 import time
 from app.services.chat_session import (
     create_session,
+    ensure_session,
     get_session,
     get_user_sessions,
     get_session_messages,
     save_message,
+    save_document_message,
+    delete_document_message,
     delete_session
 )
 from app.services.query_rewriter import rewrite_query_with_history
@@ -44,6 +47,35 @@ class ChatQueryRequest(BaseModel):
     question: str
     session_id: Optional[str] = None
     document_ids: Optional[List[str]] = None
+
+
+class DocumentMessageRequest(BaseModel):
+    """
+    Request to save a document upload message to a chat session
+    
+    Why needed?
+    - When user uploads a PDF, we want to show it in the chat
+    - This creates a persistent "document" message in the session
+    """
+    session_id: Optional[str] = None
+    document_id: str
+    file_name: str
+    file_size: str
+    file_url: str
+    status: str = "pending"
+
+
+class DeleteDocumentFromChatRequest(BaseModel):
+    """
+    Request to delete a document from within the chat
+    
+    What happens:
+    1. Deletes the document message from chat_messages
+    2. Deletes the actual document from documents table
+    3. Deletes the PDF from Supabase Storage
+    """
+    session_id: str
+    document_id: str
 
 
 @router.post("/sessions/create")
@@ -91,6 +123,147 @@ async def delete_chat_session(
 
     deleted = delete_session(session_id)
     return {"success": deleted}
+
+
+@router.post("/document-message")
+async def add_document_message(
+    request: DocumentMessageRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Add a document upload message to a chat session
+    
+    How it works:
+    1. Ensure session exists (create if needed)
+    2. Save document message to chat_messages
+    3. Return session_id and message details
+    
+    Why this endpoint?
+    - When user uploads PDF, we want it to appear in the chat
+    - Creates a visual record of the upload in conversation
+    - Allows user to see what documents are in this chat
+    
+    Example flow:
+    1. User uploads PDF → /api/documents/upload
+    2. Frontend calls this endpoint → creates message in chat
+    3. User sees document card in conversation
+    """
+    clerk_id = current_user["clerk_id"]
+    
+    # Ensure we have a session
+    session = ensure_session(clerk_id, request.session_id)
+    session_id = session["id"]
+    
+    # Save the document message
+    message = save_document_message(
+        session_id=session_id,
+        document_id=request.document_id,
+        file_name=request.file_name,
+        file_size=request.file_size,
+        file_url=request.file_url,
+        status=request.status
+    )
+    
+    print(f"📎 [DOCUMENT MESSAGE] Added to session {session_id}: {request.file_name}")
+    
+    return {
+        "success": True,
+        "session_id": session_id,
+        "message": {
+            "id": message["id"],
+            "role": "document",
+            "content": request.file_name,
+            "sources": message["sources"],
+            "created_at": message["created_at"]
+        }
+    }
+
+
+@router.delete("/document-message")
+async def remove_document_from_chat(
+    request: DeleteDocumentFromChatRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Delete a document from within the chat
+    
+    How it works:
+    1. Verify session ownership
+    2. Delete the document message from chat_messages
+    3. Delete the actual document (file + database record)
+    4. Update user's upload count
+    
+    Why combined delete?
+    - User clicks delete on document card in chat
+    - Removes both the visual message AND the actual document
+    - Clean single action for user
+    
+    Security:
+    - Checks session belongs to user
+    - Checks document belongs to user
+    """
+    clerk_id = current_user["clerk_id"]
+    
+    # Verify session ownership
+    session = get_session(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if session["clerk_id"] != clerk_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Get document to verify ownership and get storage path
+    doc_response = supabase.table("documents")\
+        .select("*")\
+        .eq("id", request.document_id)\
+        .eq("clerk_id", clerk_id)\
+        .execute()
+    
+    if not doc_response.data:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    document = doc_response.data[0]
+    
+    # 1. Delete the chat message
+    message_deleted = delete_document_message(request.session_id, request.document_id)
+    print(f"🗑️ [DOCUMENT MESSAGE] Deleted from chat: {message_deleted}")
+    
+    # 2. Delete from Supabase Storage
+    file_url = document["file_url"]
+    storage_path = file_url.split("/documents/")[-1] if "/documents/" in file_url else None
+    
+    if storage_path:
+        try:
+            supabase.storage.from_("documents").remove([storage_path])
+            print(f"🗑️ [STORAGE] Deleted file: {storage_path}")
+        except Exception as e:
+            print(f"⚠️ [STORAGE] Failed to delete: {e}")
+    
+    # 3. Delete document record from database
+    supabase.table("documents")\
+        .delete()\
+        .eq("id", request.document_id)\
+        .execute()
+    print(f"🗑️ [DATABASE] Deleted document record: {request.document_id}")
+    
+    # 4. Update user's upload count
+    try:
+        if current_user["uploads_this_month"] > 0:
+            supabase.table("users").update({
+                "uploads_this_month": current_user["uploads_this_month"] - 1
+            }).eq("id", current_user["id"]).execute()
+    except Exception:
+        pass
+    
+    # 5. Invalidate cache
+    from app.services.redis_cache import cache_service
+    cache_service.invalidate_user_documents(clerk_id)
+    
+    return {
+        "success": True,
+        "message": "Document deleted from chat and storage",
+        "document_id": request.document_id
+    }
 
 
 @router.post("/query")

@@ -34,7 +34,7 @@ async def create_user(user: UserCreate) -> User:
     return User(**response.data[0])
 
 
-async def get_or_create_user(clerk_id: str, email: str) -> User:
+async def get_or_create_user(clerk_id: str, email: Optional[str] = None) -> User:
     """
     Get user from database, create if doesn't exist
     
@@ -42,11 +42,16 @@ async def get_or_create_user(clerk_id: str, email: str) -> User:
     1. Check if user exists in our DB
     2. If not, create them (first time signing in)
     3. Return user object
+    
+    Note: If email is None (some OAuth flows), use placeholder.
+    The Clerk webhook will update with real email later.
     """
     user = await get_user_by_clerk_id(clerk_id)
     
     if not user:
-        user = await create_user(UserCreate(clerk_id=clerk_id, email=email))
+        # Use placeholder if email not in JWT (webhook will update it)
+        user_email = email or f"{clerk_id}@pending.finsight.app"
+        user = await create_user(UserCreate(clerk_id=clerk_id, email=user_email))
     
     return user
 
