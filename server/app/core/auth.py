@@ -14,8 +14,7 @@ security = HTTPBearer()
 
 def get_clerk_jwks():
     """Fetch Clerk's public keys for JWT verification (cached)"""
-    # Extract Clerk frontend API from publishable key or use direct domain
-    # For development, use your Clerk instance domain
+
     clerk_domain = "sacred-muskox-58.clerk.accounts.dev"
     response = httpx.get(f"https://{clerk_domain}/.well-known/jwks.json")
     response.raise_for_status()
@@ -36,13 +35,12 @@ async def get_current_user(
     token = credentials.credentials
     
     try:
-        # Decode JWT without verification first to get header
+     
         unverified_header = jwt.get_unverified_header(token)
         
-        # Get Clerk's public keys
+      
         jwks = get_clerk_jwks()
         
-        # Find the key that matches the token
         rsa_key = {}
         for key in jwks["keys"]:
             if key["kid"] == unverified_header["kid"]:
@@ -57,19 +55,18 @@ async def get_current_user(
         if not rsa_key:
             raise HTTPException(status_code=401, detail="Unable to find appropriate key")
         
-        # Verify and decode the token
+        
         payload = jwt.decode(
             token,
             rsa_key,
             algorithms=["RS256"],
-            options={"verify_aud": False}  # Clerk doesn't use audience claim
+            options={"verify_aud": False}  
         )
         
-        # Extract user info from payload
-        # Clerk stores user ID in "sub" claim
+       
         clerk_id = payload.get("sub")
         
-        # Email might be in different places depending on sign-up method
+        
         email = payload.get("email")
         if not email:
             email = payload.get("primary_email_address")
@@ -81,12 +78,12 @@ async def get_current_user(
         if not clerk_id:
             raise HTTPException(status_code=401, detail="Invalid token payload")
 
-        # Use user_service to get or create user (auto-creates on first login)
+        
         from app.services.user_service import get_or_create_user
 
         user = await get_or_create_user(clerk_id=clerk_id, email=email)
 
-        # Return dict with user data (not User object, for compatibility)
+        
         return {
             "id": str(user.id),
             "clerk_id": user.clerk_id,

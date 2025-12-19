@@ -38,14 +38,14 @@ class Settings(BaseSettings):
     free_query_limit: int = 5
 
     # File size limits (in bytes)
-    max_file_size_free: int = 10 * 1024 * 1024       # 10 MB for free users
-    max_file_size_premium: int = 50 * 1024 * 1024    # 50 MB for premium/admin
+    max_file_size_free: int = 10 * 1024 * 1024       
+    max_file_size_premium: int = 50 * 1024 * 1024    
 
     # Storage quota limits (in bytes)
-    max_storage_free: int = 50 * 1024 * 1024         # 50 MB total for free users
-    max_storage_premium: int = 500 * 1024 * 1024     # 500 MB total for premium
+    max_storage_free: int = 50 * 1024 * 1024         
+    max_storage_premium: int = 500 * 1024 * 1024     
 
-    # CORS origins (comma-separated list for production)
+
     cors_origins: str = "http://localhost:5173"
 
     class Config:

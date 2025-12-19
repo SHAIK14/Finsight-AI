@@ -23,13 +23,13 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
         email=current_user["email"]
     )
 
-    # Calculate limits based on role
+   
     if user.role == "admin":
-        uploads_limit = None  # Unlimited
-        queries_limit = None  # Unlimited
+        uploads_limit = None  
+        queries_limit = None  
     elif user.role == "premium":
-        uploads_limit = None  # Unlimited
-        queries_limit = None  # Unlimited
+        uploads_limit = None  
+        queries_limit = None  
     else:  # free
         uploads_limit = settings.free_upload_limit
         queries_limit = settings.free_query_limit
