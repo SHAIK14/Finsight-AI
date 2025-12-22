@@ -187,7 +187,7 @@ def chunk_and_embed(text_pages: List[Dict], table_data: List[Dict], document_id:
         all_chunks = []
         chunk_index = 0
 
-        # Step 1: Process text pages (existing logic)
+       
         for page in text_pages:
             page_chunks = splitter.split_text(page["text"])
 
@@ -205,17 +205,15 @@ def chunk_and_embed(text_pages: List[Dict], table_data: List[Dict], document_id:
 
         logger.info(f"Created {len(all_chunks)} text chunks")
 
-        # Step 2: Process tables (NEW)
         table_chunks_count = 0
         for table in table_data:
-            # Convert table to markdown
+      
             markdown_table = table_to_markdown(
                 table["table_data"],
                 table["page_number"],
                 table["table_index"]
             )
 
-            # Create table chunk (tables are NOT split - keep whole)
             all_chunks.append({
                 "document_id": document_id,
                 "content": markdown_table,
@@ -234,15 +232,12 @@ def chunk_and_embed(text_pages: List[Dict], table_data: List[Dict], document_id:
 
         logger.info(f"Created {table_chunks_count} table chunks")
 
-        # Step 3: Generate embeddings for ALL chunks (text + tables)
-        # Extract just the content for embedding
+       
         all_content = [chunk["content"] for chunk in all_chunks]
 
-        # Batch generate embeddings (single API call for all chunks - much faster!)
         logger.info(f"Generating embeddings for {len(all_content)} total chunks...")
         vectors = embeddings_model.embed_documents(all_content)
 
-        # Step 4: Attach embeddings to chunks
         for chunk, vector in zip(all_chunks, vectors):
             chunk["embedding"] = vector
 
