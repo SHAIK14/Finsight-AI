@@ -149,6 +149,37 @@
   --shadow-lg: 0 10px 15px -3px rgba(120, 100, 60, 0.2);
 }
 
+/* Beautiful UI token bridge → FinSight theme */
+:root,
+[data-theme] {
+  --page: var(--color-bg-primary);
+  --canvas: var(--color-bg-secondary);
+  --surface: var(--color-bg-primary);
+  --inset: var(--color-bg-secondary);
+  --hover: var(--color-bg-secondary);
+  --hover-2: var(--color-bg-tertiary);
+  --ink: var(--color-text-primary);
+  --ink-2: var(--color-text-secondary);
+  --ink-3: var(--color-text-tertiary);
+  --line: var(--color-border);
+  --line-strong: var(--color-border-hover);
+  --field: var(--color-bg-secondary);
+  --bui-accent: #0285ff;
+  --accent-ink: #0170dd;
+  --accent-tint: color-mix(in srgb, #0285ff 12%, transparent);
+  --bui-green: var(--color-success);
+  --green-tint: var(--color-success-light);
+  --bui-orange: var(--color-warning);
+  --orange-tint: var(--color-warning-light);
+  --bui-red: var(--color-error);
+  --red-tint: var(--color-error-light);
+  --shadow-hairline: 0 0 0 1px var(--color-border);
+  --shadow-btn: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 0 0 1px var(--color-border);
+  --shadow-raised: 0 8px 24px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--color-border);
+  --shadow-overlay: 0 16px 40px rgba(0, 0, 0, 0.16), 0 0 0 1px var(--color-border);
+}
+
 /* Apply theme colors to body */
 body {
   background-color: var(--color-bg-primary);

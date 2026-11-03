@@ -4,7 +4,8 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { KineticProgressIndicator } from "./ChatArea";
+import LoadingState from "./beautiful-ui/LoadingState";
+import AgentTaskRows from "./beautiful-ui/AgentTaskRows";
 
 /**
  * Chat Message Components
@@ -42,8 +43,8 @@ export function ChatMessage({
   if (isUser) {
     return (
       <div className="flex justify-end animate-fade-in">
-        <div className="max-w-[75%] bg-[var(--color-accent)] text-white rounded-2xl rounded-br-md px-4 py-3 shadow-sm hover:shadow-md transition-shadow duration-200">
-          <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
+        <div className="max-w-[75%] rounded-2xl rounded-br-md bg-[#0285ff] px-4 py-3 text-white">
+          <p className="text-[14.5px] leading-6 whitespace-pre-wrap">
             {message.content}
           </p>
         </div>
@@ -51,208 +52,172 @@ export function ChatMessage({
     );
   }
 
+  const showPipeline =
+    message.streaming && message.status && !message.content;
+
   return (
-    <div className="flex gap-3 items-start group animate-fade-in -mx-3 px-3 py-2 rounded-xl hover:bg-[var(--color-bg-secondary)]/50 transition-colors duration-200">
-      <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[var(--color-accent)] to-[var(--color-accent)]/70 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-sm group-hover:shadow-md transition-shadow duration-200">
-        <svg
-          className="w-4 h-4 text-white"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M13 10V3L4 14h7v7l9-11h-7z"
-          />
-        </svg>
-      </div>
+    <div className="group animate-fade-in space-y-6">
+      {showPipeline ? (
+        <div className="space-y-4 max-w-md">
+          <LoadingState label={message.status?.replace("...", "") || "Thinking"} />
+          <AgentTaskRows status={message.status} />
+        </div>
+      ) : null}
 
-      <div className="flex-1 space-y-4">
-        {message.streaming && message.status && !message.content && (
-          <KineticProgressIndicator
-            status={message.status}
-            webSources={message.webSources || []}
-          />
-        )}
-
-        {/* Markdown Content */}
-        {message.content && (
-          <div className="relative">
-            <div
-              className="prose prose-sm max-w-none
-            prose-headings:font-semibold prose-headings:text-[var(--color-text-primary)] prose-headings:mb-3 prose-headings:mt-4 first:prose-headings:mt-0
-            prose-p:text-[var(--color-text-primary)] prose-p:leading-relaxed prose-p:my-3 first:prose-p:mt-0 last:prose-p:mb-0
-            prose-strong:text-[var(--color-text-primary)] prose-strong:font-semibold
-            prose-ul:my-3 prose-ul:list-disc prose-ul:pl-6
-            prose-ol:my-3 prose-ol:list-decimal prose-ol:pl-6
-            prose-li:text-[var(--color-text-primary)] prose-li:my-1.5
-            prose-code:text-[var(--color-accent)] prose-code:bg-[var(--color-bg-secondary)] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:font-mono prose-code:before:content-[''] prose-code:after:content-['']
+      {/* Markdown Content */}
+      {message.content ? (
+        <div
+          className="prose prose-sm max-w-none
+            prose-headings:font-semibold prose-headings:text-ink prose-headings:tracking-tight
+            prose-h1:text-xl prose-h1:mt-0 prose-h1:mb-4
+            prose-h2:text-lg prose-h2:mt-8 prose-h2:mb-3
+            prose-h3:text-base prose-h3:mt-6 prose-h3:mb-2
+            prose-p:text-ink prose-p:leading-7 prose-p:my-4
+            prose-strong:text-ink prose-strong:font-semibold
+            prose-ul:my-4 prose-ul:list-disc prose-ul:pl-5 prose-ul:space-y-2
+            prose-ol:my-4 prose-ol:list-decimal prose-ol:pl-5 prose-ol:space-y-2
+            prose-li:text-ink prose-li:leading-7 prose-li:my-0
+            prose-code:text-accent-ink prose-code:bg-inset prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-[13px] prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
             prose-pre:bg-transparent prose-pre:p-0 prose-pre:m-0
-            prose-table:border-collapse prose-table:w-full prose-table:my-4
-            prose-th:border prose-th:border-[var(--color-border)] prose-th:bg-[var(--color-bg-secondary)] prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:text-[var(--color-text-primary)]
-            prose-td:border prose-td:border-[var(--color-border)] prose-td:px-3 prose-td:py-2 prose-td:text-[var(--color-text-primary)]
-            prose-a:text-[var(--color-accent)] prose-a:no-underline hover:prose-a:underline
-            prose-blockquote:border-l-4 prose-blockquote:border-[var(--color-accent)] prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-[var(--color-text-secondary)]
+            prose-table:my-6 prose-table:w-full prose-table:border-collapse prose-table:text-[13px]
+            prose-thead:border-b prose-thead:border-line
+            prose-th:bg-inset prose-th:px-3.5 prose-th:py-2.5 prose-th:text-left prose-th:font-semibold prose-th:text-ink prose-th:border prose-th:border-line
+            prose-td:px-3.5 prose-td:py-2.5 prose-td:text-ink prose-td:border prose-td:border-line prose-td:align-top
+            prose-tr:border-b prose-tr:border-line
+            prose-a:text-accent-ink prose-a:no-underline hover:prose-a:underline
+            prose-blockquote:border-l-2 prose-blockquote:border-line-strong prose-blockquote:pl-4 prose-blockquote:text-ink-2
           "
-            >
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeRaw]}
-                components={{
-                  code({ node, inline, className, children, ...props }) {
-                    const match = /language-(\w+)/.exec(className || "");
-                    const language = match ? match[1] : "";
+        >
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeRaw]}
+            components={{
+              table({ children }) {
+                return (
+                  <div className="my-6 overflow-x-auto rounded-[10px] border border-line bg-surface shadow-hairline">
+                    <table className="m-0 w-full border-collapse text-[13px]">
+                      {children}
+                    </table>
+                  </div>
+                );
+              },
+              thead({ children }) {
+                return <thead className="bg-inset">{children}</thead>;
+              },
+              th({ children }) {
+                return (
+                  <th className="border-b border-line px-3.5 py-2.5 text-left text-[12.5px] font-semibold text-ink">
+                    {children}
+                  </th>
+                );
+              },
+              td({ children }) {
+                return (
+                  <td className="border-b border-line px-3.5 py-2.5 align-top text-ink last:border-0">
+                    {children}
+                  </td>
+                );
+              },
+              code({ node, inline, className, children, ...props }) {
+                const match = /language-(\w+)/.exec(className || "");
+                const language = match ? match[1] : "";
 
-                    if (!inline && language) {
-                      return (
-                        <CodeBlock
-                          language={language}
-                          code={String(children).replace(/\n$/, "")}
-                        />
-                      );
-                    }
+                if (!inline && language) {
+                  return (
+                    <CodeBlock
+                      language={language}
+                      code={String(children).replace(/\n$/, "")}
+                    />
+                  );
+                }
 
-                    return (
-                      <code className={className} {...props}>
-                        {children}
-                      </code>
-                    );
-                  },
-                }}
-              >
-                {message.content}
-              </ReactMarkdown>
-              {message.streaming && (
-                <span className="inline-block w-2 h-5 ml-1 bg-[var(--color-accent)] animate-pulse rounded-sm" />
-              )}
-            </div>
-          </div>
-        )}
+                return (
+                  <code className={className} {...props}>
+                    {children}
+                  </code>
+                );
+              },
+            }}
+          >
+            {message.content}
+          </ReactMarkdown>
+          {message.streaming ? (
+            <span className="inline-block w-2 h-5 ml-1 bg-[#0285ff] animate-pulse rounded-sm" />
+          ) : null}
+        </div>
+      ) : null}
 
-        {message.sources &&
-          message.sources.length > 0 &&
-          !message.streaming && <SourceCitations sources={message.sources} />}
+      {message.sources &&
+        message.sources.length > 0 &&
+        !message.streaming && <SourceCitations sources={message.sources} />}
 
-        {message.webSources &&
-          message.webSources.length > 0 &&
-          !message.streaming && <WebSourceCards sources={message.webSources} />}
+      {message.webSources &&
+        message.webSources.length > 0 &&
+        !message.streaming && <WebSourceCards sources={message.webSources} />}
 
-        {!message.streaming && message.content && (
-          <div className="flex items-center gap-1 pt-2 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button
-              onClick={handleCopy}
-              className="p-1.5 hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors"
-              title="Copy response"
-            >
-              {copied ? (
-                <svg
-                  className="w-4 h-4 text-green-500"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
-              ) : (
-                <svg
-                  className="w-4 h-4 text-[var(--color-text-tertiary)]"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                  />
-                </svg>
-              )}
-            </button>
-
-            {isLast && onRegenerate && (
-              <button
-                onClick={() => onRegenerate(message.id)}
-                className="p-1.5 hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors"
-                title="Regenerate response"
-              >
-                <svg
-                  className="w-4 h-4 text-[var(--color-text-tertiary)]"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                  />
-                </svg>
-              </button>
+      {!message.streaming && message.content ? (
+        <div className="flex items-center gap-0.5 pt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={handleCopy}
+            className="grid size-7 place-items-center rounded-md text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
+            title="Copy response"
+            aria-label={copied ? "Copied" : "Copy response"}
+          >
+            {copied ? (
+              <svg className="size-3.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            ) : (
+              <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
             )}
+          </button>
 
+          {isLast && onRegenerate ? (
             <button
-              onClick={() => setFeedback(feedback === "up" ? null : "up")}
-              className={`p-1.5 hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors ${
-                feedback === "up" ? "bg-green-500/10" : ""
-              }`}
-              title="Good response"
+              onClick={() => onRegenerate(message.id)}
+              className="grid size-7 place-items-center rounded-md text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
+              title="Regenerate response"
+              aria-label="Retry response"
             >
-              <svg
-                className={`w-4 h-4 ${
-                  feedback === "up"
-                    ? "text-green-500"
-                    : "text-[var(--color-text-tertiary)]"
-                }`}
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5"
-                />
+              <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
             </button>
+          ) : null}
 
-            <button
-              onClick={() => setFeedback(feedback === "down" ? null : "down")}
-              className={`p-1.5 hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors ${
-                feedback === "down" ? "bg-red-500/10" : ""
-              }`}
-              title="Bad response"
-            >
-              <svg
-                className={`w-4 h-4 ${
-                  feedback === "down"
-                    ? "text-red-500"
-                    : "text-[var(--color-text-tertiary)]"
-                }`}
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018a2 2 0 01.485.06l3.76.94m-7 10v5a2 2 0 002 2h.096c.5 0 .905-.405.905-.904 0-.715.211-1.413.608-2.008L17 13V4m-7 10h2m5-10h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5"
-                />
-              </svg>
-            </button>
-          </div>
-        )}
-      </div>
+          <button
+            onClick={() => setFeedback(feedback === "up" ? null : "up")}
+            className={`grid size-7 place-items-center rounded-md transition-colors ${
+              feedback === "up"
+                ? "bg-[var(--color-bg-secondary)] text-emerald-500"
+                : "text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text-primary)]"
+            }`}
+            title="Helpful"
+            aria-pressed={feedback === "up"}
+          >
+            <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5" />
+            </svg>
+          </button>
+
+          <button
+            onClick={() => setFeedback(feedback === "down" ? null : "down")}
+            className={`grid size-7 place-items-center rounded-md transition-colors ${
+              feedback === "down"
+                ? "bg-[var(--color-bg-secondary)] text-red-500"
+                : "text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text-primary)]"
+            }`}
+            title="Not helpful"
+            aria-pressed={feedback === "down"}
+          >
+            <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018a2 2 0 01.485.06l3.76.94m-7 10v5a2 2 0 002 2h.096c.5 0 .905-.405.905-.904 0-.715.211-1.413.608-2.008L17 13V4m-7 10h2m5-10h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5" />
+            </svg>
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -486,48 +451,35 @@ export function SourceCitations({ sources }) {
   if (!sources || sources.length === 0) return null;
 
   return (
-    <div className="space-y-3">
+    <div className="mt-2 space-y-3">
       <div className="flex items-center gap-2">
-        <svg
-          className="w-4 h-4 text-[var(--color-accent)]"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-          />
-        </svg>
-        <span className="text-sm font-medium text-[var(--color-text-primary)]">
-          Sources
+        <span className="text-[13px] font-semibold text-ink">Sources</span>
+        <span className="inline-flex h-5 items-center rounded-md bg-inset px-1.5 text-[11.5px] font-medium text-ink-2 shadow-hairline tabular-nums">
+          {sources.length}
         </span>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+      <div className="flex gap-2.5 overflow-x-auto pb-1 scrollbar-hide">
         {sources.slice(0, 5).map((source, i) => (
           <button
             key={i}
+            type="button"
             onClick={() => setExpandedId(expandedId === i ? null : i)}
-            className={`flex-shrink-0 w-36 p-3 rounded-lg border text-left transition-all ${
+            className={`flex w-44 shrink-0 flex-col gap-2 rounded-[10px] border p-3 text-left transition-colors ${
               expandedId === i
-                ? "border-[var(--color-accent)] bg-[var(--color-accent)]/5"
-                : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:border-[var(--color-accent)]/50"
+                ? "border-[#0285ff]/40 bg-accent-tint"
+                : "border-line bg-surface hover:border-line-strong"
             }`}
           >
-            <div className="flex items-center gap-2 mb-1.5">
-              <div className="w-6 h-6 rounded bg-[var(--color-accent)]/10 flex items-center justify-center">
-                <span className="text-xs font-semibold text-[var(--color-accent)]">
-                  {i + 1}
-                </span>
-              </div>
-              <span className="text-xs font-medium text-[var(--color-text-secondary)]">
+            <div className="flex items-center gap-2">
+              <span className="flex size-6 items-center justify-center rounded-md bg-accent-tint text-[11px] font-semibold text-accent-ink">
+                {i + 1}
+              </span>
+              <span className="text-[12px] font-medium text-ink-2">
                 Page {source.page_number || "?"}
               </span>
             </div>
-            <div className="text-xs text-[var(--color-text-primary)] line-clamp-2 leading-relaxed">
+            <div className="line-clamp-2 text-[12.5px] leading-snug text-ink">
               {source.document_name || "Document"}
             </div>
           </button>
@@ -535,32 +487,24 @@ export function SourceCitations({ sources }) {
       </div>
 
       {expandedId !== null && sources[expandedId] && (
-        <div className="p-3 rounded-lg border border-[var(--color-accent)]/30 bg-[var(--color-bg-secondary)]">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-medium text-[var(--color-accent)]">
-              Source {expandedId + 1} • Page{" "}
+        <div className="rounded-[10px] border border-line bg-inset p-3.5">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-[12px] font-medium text-accent-ink">
+              Source {expandedId + 1} · Page{" "}
               {sources[expandedId].page_number || "N/A"}
             </span>
             <button
+              type="button"
               onClick={() => setExpandedId(null)}
-              className="p-1 hover:bg-[var(--color-bg-tertiary)] rounded"
+              className="rounded p-1 text-ink-3 hover:bg-hover-2 hover:text-ink"
+              aria-label="Close preview"
             >
-              <svg
-                className="w-3 h-3 text-[var(--color-text-tertiary)]"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
+              <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
           </div>
-          <p className="text-sm text-[var(--color-text-primary)] leading-relaxed">
+          <p className="text-[13px] leading-6 text-ink">
             {sources[expandedId].content ||
               sources[expandedId].content_preview ||
               "No preview available"}
